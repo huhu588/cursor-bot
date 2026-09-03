@@ -1,0 +1,58 @@
+﻿# Codemagic锛氬湪 macOS 鏈哄櫒涓婃妸鏈伐鍏锋墦鎴?Mac 鍙敤鐨?.app / .dmg
+# 鐢ㄦ硶锛欳odemagic 杩炴帴鏈?Gitee 浠撳簱鍚庯紝閫?macos-build 宸ヤ綔娴佹瀯寤猴紱浜х墿鍦?Artifacts 閲屼笅杞姐€?workflows:
+  macos-build:
+    name: SandClaimer macOS (.app + .dmg)
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    environment:
+      vars:
+        APP_NAME: "Sand Claimer"
+    scripts:
+      - name: 瀹夎 Python 渚濊禆锛堝惈 mac 鐨?pyobjc锛?        script: |
+          set -euo pipefail
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r requirements.txt
+          # pywebview 鍦?mac 璧?Cocoa/WebKit锛岄渶瑕?pyobjc
+          python3 -m pip install pyobjc-core pyobjc-framework-Cocoa pyobjc-framework-WebKit pyobjc-framework-Quartz
+      - name: 鐢熸垚 .icns 鍥炬爣
+        script: |
+          set -euo pipefail
+          SRC="assets/icon-1024.png"
+          if [ -f "$SRC" ]; then
+            ICONSET="icon.iconset"; rm -rf "$ICONSET"; mkdir -p "$ICONSET"
+            for s in 16 32 64 128 256 512; do
+              sips -z $s $s     "$SRC" --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
+              d=$((s*2)); sips -z $d $d "$SRC" --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
+            done
+            iconutil -c icns "$ICONSET" -o icon.icns
+            echo "icon.icns 鐢熸垚瀹屾垚"
+          else
+            echo "娌℃湁 assets/icon-1024.png锛岃烦杩囧浘鏍?
+          fi
+      - name: Nuitka 缂栬瘧涓?.app
+        script: |
+          set -euo pipefail
+          ICON_ARG=""
+          [ -f icon.icns ] && ICON_ARG="--macos-app-icon=icon.icns"
+          python3 -m nuitka --standalone --assume-yes-for-downloads \
+            --static-libpython=no \
+            --macos-create-app-bundle \
+            --macos-app-name="Sand Claimer" \
+            $ICON_ARG \
+            --enable-plugin=pywebview \
+            --include-data-dir=web=web \
+            --company-name="SandClaimer" --product-name="Sand Claimer" \
+            --product-version=2.0.2 \
+            --output-dir=build-mac \
+            app.py
+      - name: 鎵撴垚 DMG
+        script: |
+          set -euo pipefail
+          cd build-mac
+          APP=$(ls -d *.app | head -n1)
+          # ad-hoc 閲嶇鍚嶏紝鍑忓皯鏈満 Gatekeeper 鎷︽埅锛堟寮忓垎鍙戦渶 Apple 寮€鍙戣€呰瘉涔?+ 鍏瘉锛?          codesign --force --deep --sign - "$APP" || true
+          hdiutil create -volname "SandClaimer" -srcfolder "$APP" -ov -format UDZO "SandClaimer.dmg"
+    artifacts:
+      - build-mac/*.dmg
+      - build-mac/*.app
+

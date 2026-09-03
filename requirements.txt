@@ -1,0 +1,8 @@
+pywebview
+httpx
+requests
+websocket-client
+nuitka
+zstandard
+pillow
+pefile

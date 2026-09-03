@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Infinity · INFINITY免费公益</title>
+<link rel="icon" type="image/png" href="infinity-icon.png" />
+<link rel="shortcut icon" type="image/x-icon" href="favicon.ico" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <img class="brand-icon" src="infinity-icon.png" width="36" height="36" alt="" />
+        <div class="brand-text">
+          <strong>Infinity</strong>
+          <span>INFINITY免费公益</span>
+        </div>
+      </div>
+      <nav class="nav" aria-label="分区">
+        <a class="nav-item is-active" href="#cardWelcome" data-nav="cardWelcome">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1z"/></svg>
+          概览
+        </a>
+        <a class="nav-item" href="#patchCard" data-nav="patchCard">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.7 6.3a1 1 0 0 1 1.4 0l1.6 1.6a1 1 0 0 1 0 1.4l-8.2 8.2-3.2.6.6-3.2 8.8-8.6zM4 20h16"/></svg>
+          本机补丁
+        </a>
+        <a class="nav-item" href="#importCard" data-nav="importCard">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>
+          导入账号
+        </a>
+        <a class="nav-item" href="#accountCard" data-nav="accountCard">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 14a4 4 0 1 1 8 0M4 20a6 6 0 0 1 16 0M12 7a3 3 0 1 1 0-6 3 3 0 0 1 0 6z"/></svg>
+          账号列表
+        </a>
+        <button type="button" class="nav-item" id="btnHelp">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 18h.01M9.5 9a2.5 2.5 0 1 1 4.2 1.8c-.8.7-1.7 1.1-1.7 2.2v.2M12 22a10 10 0 1 1 0-20 10 10 0 0 1 0 20z"/></svg>
+          使用说明
+        </button>
+      </nav>
+      <p class="sidebar-note">交流群：992416264</p>
+    </aside>
+
+    <div class="workspace">
+      <div class="stack">
+        <section class="card welcome" id="cardWelcome">
+          <div class="welcome-main">
+            <div class="welcome-meta">
+              <span class="notice-tag" id="greetTag">午安</span>
+              <span class="hint" id="greetDate"></span>
+            </div>
+            <h1>欢迎使用 Infinity</h1>
+            <p class="sub">INFINITY免费公益软件，仅供学习交流，严禁倒卖或收费，可cursor使用bot额度。</p>
+          </div>
+          <button type="button" class="btn primary btn-rent" id="btnRentPlatform">租赁cursor平台</button>
+        </section>
+
+        <div class="notice card" role="note">
+          <span class="notice-tag">用户公告</span>
+          <div class="notice-body">
+            <p>Infinity免费提供，公益分享，仅供学习交流，严禁倒卖或收费。如果没有账号可以选择Infinity平台。</p>
+            <p>Cursor租赁官网：<a class="ext-link" href="https://infinity-site.cc-infinity.shop/" data-url="https://infinity-site.cc-infinity.shop/">https://infinity-site.cc-infinity.shop/</a></p>
+            <p>Cursor租赁软件使用教程：<a class="ext-link" href="https://docs.qq.com/doc/p/e7e140456eaddf5f8e7987536c3826300c766c1c" data-url="https://docs.qq.com/doc/p/e7e140456eaddf5f8e7987536c3826300c766c1c">https://docs.qq.com/doc/p/e7e140456eaddf5f8e7987536c3826300c766c1c</a></p>
+          </div>
+        </div>
+
+        <section class="card" id="patchCard">
+          <div class="card-head">
+            <h2>本机 Cursor 补丁 <span class="pill idle" id="patchPill">检测中…</span></h2>
+            <div class="actions">
+              <button class="btn primary" id="btnPatch">打补丁</button>
+              <button class="btn ghost" id="btnRestore">回退</button>
+              <button class="btn" id="btnDnsFix" title="仅修复 hosts DNS（Clash fake-ip 等）">修复 DNS</button>
+              <button class="btn" id="btnPatchReport" title="前半段与 patch_status.bat 输出逐行相同，后附引擎状态行">查看补丁情况</button>
+            </div>
+          </div>
+          <p class="hint" id="patchInfo">正在检测本机 Cursor 安装…</p>
+          <ul class="patch-detail" id="patchDetail" hidden></ul>
+          <p class="hint patch-admin" id="patchAdminHint" hidden></p>
+          <div class="row-actions">
+            <input type="text" id="cursorPathInput" spellcheck="false"
+              placeholder="自定义 Cursor 路径（Cursor.exe / resources/app / 安装目录），留空=自动检测" />
+            <button class="btn" id="btnSetPath">设置路径</button>
+          </div>
+        </section>
+
+        <section class="card" id="importCard">
+          <div class="card-head">
+            <h2>导入账号</h2>
+            <div class="actions">
+              <button class="btn primary" id="btnDetectLocal">探测本机账号</button>
+              <button class="btn" id="btnImportFile">导入文件</button>
+              <button class="btn ghost" id="btnClear">清空</button>
+            </div>
+          </div>
+          <textarea id="tokenInput" spellcheck="false"
+            placeholder="粘贴 token，每行一个，两种格式都支持：&#10;1) access_token（eyJ...）&#10;2) ws token（user_01XXXX::eyJ...）&#10;也可直接粘贴 cursor_accounts_*.json 的内容，或点「导入文件」选 JSON。"></textarea>
+          <div class="row-actions">
+            <button class="btn primary" id="btnAddText">添加到列表</button>
+            <span class="hint" id="importHint">支持批量：一次粘贴多行 / 选多个 JSON 文件。</span>
+          </div>
+        </section>
+
+        <section class="card card-fill" id="accountCard">
+          <div class="card-head">
+            <h2>账号列表 <span class="pill idle" id="countPill">0 个</span></h2>
+            <div class="actions">
+              <label class="conc">分组
+                <select id="groupFilter" title="按分组筛选列表">
+                  <option value="">全部分组</option>
+                  <option value="__none__">未分组</option>
+                </select>
+              </label>
+              <button class="btn" id="btnGroups" type="button">管理分组</button>
+              <label class="conc" title="切号时同时重置本机机器码，防止多个小号被 Cursor 关联">
+                <input type="checkbox" id="resetMidChk" /> 切号重置机器码
+              </label>
+              <label class="conc">并发
+                <input type="number" id="concInput" min="1" max="10" value="3" />
+              </label>
+              <button class="btn" id="btnRefresh">刷新状态</button>
+              <button class="btn primary" id="btnClaimAll">批量领取</button>
+            </div>
+          </div>
+          <div class="progress-wrap" id="progressWrap" hidden>
+            <div class="progress"><i id="progressBar"></i></div>
+            <span class="hint" id="progressText"></span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th class="col-chk"><input type="checkbox" id="chkAll" title="全选/取消" /></th>
+                  <th>标签 / 账号</th>
+                  <th>套餐</th>
+                  <th>Sand 状态</th>
+                  <th>额度</th>
+                  <th class="col-act">操作</th>
+                </tr>
+              </thead>
+              <tbody id="rows"></tbody>
+            </table>
+            <p class="empty" id="emptyHint">还没有账号。粘贴 token 或导入 JSON 后点「添加到列表」。</p>
+          </div>
+        </section>
+      </div>
+      <footer class="statusbar">
+        <span id="statusText">就绪</span>
+        <span class="foot">仅本机直连 Cursor 官方接口；token 不上传第三方，不会上传做统计面板。</span>
+      </footer>
+    </div>
+  </div>
+
+  <div class="modal-mask" id="helpMask" hidden>
+    <div class="modal">
+      <h2>使用说明</h2>
+      <div class="modal-body">
+        <p><b>用户公告</b></p>
+        <p>Infinity免费提供，公益分享，仅供学习交流，严禁倒卖或收费。如果没有账号可以选择Infinity平台。</p>
+        <p>Cursor租赁官网：<a class="ext-link" href="https://infinity-site.cc-infinity.shop/" data-url="https://infinity-site.cc-infinity.shop/">https://infinity-site.cc-infinity.shop/</a></p>
+        <p>Cursor租赁软件使用教程：<a class="ext-link" href="https://docs.qq.com/doc/p/e7e140456eaddf5f8e7987536c3826300c766c1c" data-url="https://docs.qq.com/doc/p/e7e140456eaddf5f8e7987536c3826300c766c1c">https://docs.qq.com/doc/p/e7e140456eaddf5f8e7987536c3826300c766c1c</a></p>
+        <p><b>常用操作</b></p>
+        <ol class="help-steps">
+          <li><b>设置路径</b>：打开「本机 Cursor 补丁」，确认路径输入框。一般留空即可自动检测；若检测失败，填 Cursor.exe 或安装目录后点「设置路径」。</li>
+          <li><b>打补丁</b>：点「打补丁」，非管理员会弹出 UAC。完成后请完全退出并重新打开 Cursor，再开始对话。</li>
+          <li><b>修复 DNS</b>：若本机开着 Clash 等 fake-ip 代理，点「修复 DNS」写入 hosts；可用「查看补丁情况」确认 hosts 已修复。</li>
+          <li><b>探测本地账号</b>：到「导入账号」点「探测本机账号」，把当前 Cursor 已登录的号加入列表（也可粘贴 token / 导入 JSON）。</li>
+          <li><b>打开 Cursor IDE 使用</b>：在账号列表里点「切号」写入本机登录态，然后打开 Cursor 即可使用。需要换号时再切一次。</li>
+        </ol>
+      </div>
+      <label class="modal-check"><input type="checkbox" id="helpHide" /> 不再显示</label>
+      <div class="modal-actions"><button class="btn primary" id="helpOk">知道了</button></div>
+    </div>
+  </div>
+
+  <div class="modal-mask" id="reportMask" hidden>
+    <div class="modal report-modal">
+      <header class="detail-head">
+        <h2>补丁情况 <span class="pill idle" id="reportVerdict">检测中…</span></h2>
+        <button class="btn tiny ghost" id="reportClose" type="button">关闭</button>
+      </header>
+      <pre id="reportText" class="report-text">正在检测…</pre>
+      <div class="modal-actions">
+        <button class="btn" id="reportCopy">复制</button>
+        <button class="btn" id="reportRefresh">刷新</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-mask" id="switchMask" hidden>
+    <div class="modal">
+      <h2>切换本机 Cursor 账号</h2>
+      <div class="modal-body">
+        <p>将<strong>关闭正在运行的 Cursor</strong>，写入所选账号后重新打开。请先保存未保存的文件。</p>
+        <p id="switchTarget" class="mail"></p>
+        <p class="hint switch-hint" id="switchRefreshHint" hidden>当前号未导入 refresh token，切号后 Cursor 无法自动续期，token 过期需再次切号。</p>
+      </div>
+      <label class="modal-check"><input type="checkbox" id="switchResetMid" /> 同时重置本机机器码（避免多号被关联）</label>
+      <div class="modal-actions">
+        <button class="btn ghost" id="switchCancel">取消</button>
+        <button class="btn primary" id="switchOk">确认切号</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-mask" id="detailMask" hidden>
+    <div class="modal detail-modal">
+      <header class="detail-head">
+        <h2>账号详情</h2>
+        <button class="btn tiny ghost" id="detailClose" type="button">关闭</button>
+      </header>
+      <div class="modal-body" id="detailBody">加载中…</div>
+      <div class="modal-actions">
+        <button class="btn" id="detailRefresh">刷新额度</button>
+        <button class="btn primary" id="detailSwitch">切到本机</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-mask" id="tagMask" hidden>
+    <div class="modal">
+      <h2>编辑标签</h2>
+      <div class="modal-body">
+        <p class="hint" id="tagTarget"></p>
+        <label class="field-label">名称
+          <input type="text" id="tagNameInput" maxlength="40" spellcheck="false" placeholder="方便区分的名字，留空则显示邮箱" />
+        </label>
+        <label class="field-label">分组
+          <select id="tagGroupSelect"></select>
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button class="btn ghost" id="tagCancel" type="button">取消</button>
+        <button class="btn primary" id="tagOk" type="button">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-mask" id="groupMask" hidden>
+    <div class="modal">
+      <header class="detail-head">
+        <h2>管理分组</h2>
+        <button class="btn tiny ghost" id="groupClose" type="button">关闭</button>
+      </header>
+      <div class="row-actions">
+        <input type="text" id="groupNewInput" maxlength="32" spellcheck="false" placeholder="新分组名称，如 工作 / 测试" />
+        <button class="btn primary" id="groupAdd" type="button">新建</button>
+      </div>
+      <ul class="group-list" id="groupList"></ul>
+      <p class="hint">删除分组不会删除账号，只把其中账号标为未分组。</p>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>
