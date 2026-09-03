@@ -40,7 +40,7 @@ from dns_fix import (
 )
 
 
-TOOL_VERSION = "2.2.8"
+TOOL_VERSION = "2.2.9"
 CONFIG_VERSION = 1
 
 SAND_CLIENT_MARKER = "/*SAND_CLIENT_MODE_V1*/"
@@ -157,6 +157,25 @@ MANAGED_LOCAL_ACTION_CASES: Tuple[str, ...] = (
     "backgroundShellAction",
     "backgroundSubagentAction",
 )
+# 3.18.x 新增闸门：isManagedInferenceHttp2Available() 返回 false 或抛异常时改走 connect。
+# 它排在所有其它闸门之前，而 connect 对 sand 身份必定被拒（Sand traffic is not supported），
+# 所以「优雅回落」在这里等于必然失败——代理不支持 HTTP/2 时会静默毁掉整个会话。
+# 整块 try/catch 折成注释（RB 保留原文），让判定继续往下走。
+SAND_HTTP2_GATE_MARKER = "/*SAND_HTTP2_GATE_V1*/"
+SAND_HTTP2_GATE_RB_PREFIX = "/*SAND_HTTP2_GATE_RB:"
+SAND_HTTP2_GATE_RB_SUFFIX = "*/"
+HTTP2_GATE_RE = re.compile(
+    r'try\{if\(!1===\(.{0,200}?isManagedInferenceHttp2Available.{0,200}?\)\)'
+    r'return"managed-local-http2-unavailable"\}'
+    r'catch\(\w+\)\{return"managed-local-http2-unavailable"\}'
+)
+HTTP2_GATE_RB_RE = re.compile(
+    re.escape(SAND_HTTP2_GATE_MARKER)
+    + re.escape(SAND_HTTP2_GATE_RB_PREFIX)
+    + r"(.*?)"
+    + re.escape(SAND_HTTP2_GATE_RB_SUFFIX)
+)
+
 ACTION_GATE_ORIGINAL = '"userMessageAction"!==e.actionCase?"action-not-supported":'
 ACTION_GATE_PATCHED = (
     "!["
@@ -203,11 +222,12 @@ DOE_TAIL_318_PATCHED = (
     + "}),"
 )
 
-# 477.js Doe()：modelInfo 写死为 claude-sonnet-4-6 + {anthropic,isClaude4X,isSonnet4}，
-# Opus 5 / Fable 5.x 丢掉专用 prompt 段（isOpus5/isFable5），grok/gemini 丢 vendor 与
-# isGemini3/isGrok45ProductPrompt，modelName 也是假的。这里按 modelId 计算 Claude/Grok/
-# Gemini 系 flags；GPT/Codex 相关 flag 保持关闭（打开会切到 ApplyPatch / GPT 专用协议，
-# 在 InferenceService/Stream 下未验证）。未知模型回退到原 Claude 行为。
+# 仅 3.17.x 需要：那时 Doe() 把 modelInfo 写死为 claude-sonnet-4-6 +
+# {anthropic,isClaude4X,isSonnet4}，Opus 5 / Fable 5.x 丢掉专用 prompt 段，grok/gemini
+# 丢 vendor。这里按 modelId 计算 Claude/Grok/Gemini 系 flags；GPT/Codex 相关 flag 保持
+# 关闭（打开会切到 ApplyPatch / GPT 专用协议，在 InferenceService/Stream 下未验证）。
+# 3.18.x 起 modelInfo 改由服务端 resolvedModelMetadata.promptModelInfo 下发，锚点不存在，
+# 本补丁自动跳过（原生行为已正确）。
 MODEL_INFO_ORIGINAL = '{vendor:"anthropic",isClaude4X:!0,isSonnet4:!0}'
 _SAND_MODEL_INFO_FN = (
     'function(m){var i=String(m||"").toLowerCase().replace(/\\./g,"-"),'
@@ -362,7 +382,7 @@ SAND_FEATURE_FLAGS_DEFAULT_ON: Tuple[str, ...] = (
     "agent_host_local_loop",
 )
 
-# 运行期 featureFlags 对象（477.js 的 const Roe={...}，两处 featureFlags:Roe）。
+# 运行期 featureFlags 对象（3.17.21 的 const Roe={...} / 3.18.25 的 const xre={...}）。
 # 2.0.9 只注 flags、没注 taskToolProps → TASK 不注册，2.1.0 把注入撤掉。
 # 2.2.1 两者一起开：if(z) 让 TASK 进清单；useClientSideSubagent 让执行走本机
 # managed-local / InferenceService/Stream（Bot 额度），而不是 AgentService/Run。
@@ -386,7 +406,11 @@ SAND_AGENT_RUNTIME_FLAGS: Tuple[Tuple[str, str], ...] = (
     # Ask 模式：sandbox 可用时 Shell 进只读沙箱（无 sandbox 时仅靠 reminder 约束，与原生一致）。
     ("enableReadonlyShell", "!0"),
 )
-ROE_DECL_RE = re.compile(r"const Roe=\{[^{}]*\}")
+# 该对象的变量名每次打包都会变（3.17.21 是 Roe，3.18.25 是 xre），但字段内容稳定。
+# 按内容签名定位，再用捕获到的名字确认 featureFlags:<名> 确实引用了它。
+ROE_DECL_RE = re.compile(
+    r"const ([A-Za-z_$][A-Za-z0-9_$]*)=\{enableEmptyResponseRetry:[^{}]*\}"
+)
 
 # exec-bridge（移植自 SandClientMode 1.3.0，本机 3.17.21 锚点已实测命中）：
 # managed-local 下工具执行器按 Symbol 从 resources 取；agent-exec 与 agent-host
@@ -957,12 +981,15 @@ def remove_agent_runtime_flags(content: str) -> Tuple[str, int]:
 
 
 def apply_agent_runtime_flags(content: str) -> Tuple[str, int]:
-    """往 477.js 的 const Roe={...} 追加客户端子代理运行期开关。"""
+    """往 managed-local 运行期 featureFlags 对象追加客户端子代理开关。
+
+    对象在 3.17.21 叫 Roe、3.18.25 叫 xre，故按字段签名匹配而非变量名。
+    """
     next_content, removed = remove_agent_runtime_flags(content)
-    if "const Roe={" not in next_content or "featureFlags:Roe" not in next_content:
-        return next_content, removed
     match = ROE_DECL_RE.search(next_content)
     if match is None:
+        return next_content, removed
+    if f"featureFlags:{match.group(1)}" not in next_content:
         return next_content, removed
     fields = ",".join(
         f"{name}:{value}" for name, value in SAND_AGENT_RUNTIME_FLAGS
@@ -2225,6 +2252,20 @@ def apply_patch_to_content(content: str) -> Tuple[str, PatchStats]:
         next_content = next_content.replace(ACTION_GATE_ORIGINAL, ACTION_GATE_PATCHED, 1)
         stats.sand_rpc += 1
 
+    if SAND_HTTP2_GATE_MARKER not in next_content:
+        def _skip_http2_gate(match: re.Match[str]) -> str:
+            stats.sand_rpc += 1
+            return (
+                SAND_HTTP2_GATE_MARKER
+                + SAND_HTTP2_GATE_RB_PREFIX
+                + match.group(0)
+                + SAND_HTTP2_GATE_RB_SUFFIX
+            )
+
+        next_content, _http2_n = HTTP2_GATE_RE.subn(
+            _skip_http2_gate, next_content, count=1
+        )
+
     if SAND_SUBAGENT_ROUTE_MARKER not in next_content:
         def _allow_subagent_run_options(match: re.Match[str]) -> str:
             stats.sand_rpc += 1
@@ -2497,6 +2538,15 @@ def remove_patch_from_content(content: str) -> Tuple[str, RemoveStats]:
     if residual_action:
         next_content = next_content.replace(SAND_ACTION_ROUTE_MARKER, "")
         stats.sand_rpc += residual_action
+
+    next_content, http2_rb_n = HTTP2_GATE_RB_RE.subn(
+        lambda match: match.group(1), next_content
+    )
+    stats.sand_rpc += http2_rb_n
+    residual_http2 = next_content.count(SAND_HTTP2_GATE_MARKER)
+    if residual_http2:
+        next_content = next_content.replace(SAND_HTTP2_GATE_MARKER, "")
+        stats.sand_rpc += residual_http2
 
     next_content, local_model_rb_n = LOCAL_MODEL_RB_RE.subn(
         lambda match: "if(" + match.group(1) + ")" + match.group(2),
@@ -2834,6 +2884,7 @@ _ALL_SAND_MARKERS: Tuple[str, ...] = (
     SAND_SUBAGENT_RETRY_MARKER,
     SAND_MAX_RETRIES_MARKER,
     SAND_INTERACTION_ID_MARKER,
+    SAND_HTTP2_GATE_MARKER,
 )
 ALL_MARKERS_RE = _compile_all_markers_re()
 
@@ -2930,6 +2981,7 @@ def inspect_status(layout: CursorLayout) -> PatchStatus:
             + get(SAND_SUBAGENT_RETRY_MARKER, 0)
             + get(SAND_MAX_RETRIES_MARKER, 0)
             + get(SAND_INTERACTION_ID_MARKER, 0)
+            + get(SAND_HTTP2_GATE_MARKER, 0)
         )
         ctx_window_count = get(SAND_CTX_WINDOW_MARKER, 0)
         local_agent_count = get(SAND_BG_SUMMARY_MARKER, 0) + get(SAND_MODEL_INFO_MARKER, 0)
@@ -3681,13 +3733,10 @@ def collect_status_lines() -> List[Tuple[str, str]]:
                 ANSI_GREEN,
             )
         )
-    if status.installed and status.local_agent_markers >= 2:
-        lines.append(
-            (
-                "本地 agent 配置：后台摘要阈值（90%/95%）+ 按模型计算 modelInfo 已注入",
-                ANSI_GREEN,
-            )
-        )
+    # 3.18.x 起 modelInfo 由服务端 resolvedModelMetadata 下发，MODEL_INFO 补丁不再需要，
+    # 此时只会有 BG_SUMMARY 一个 marker。
+    if status.installed and status.local_agent_markers >= 1:
+        lines.append(("本地 agent 配置：后台摘要阈值（90%/95%）已注入", ANSI_GREEN))
     if status.installed and status.feature_flag_markers:
         ff_hint = (
             "（Task 子代理：taskToolProps + Roe 客户端开关已注入）"

@@ -1,57 +1,121 @@
-﻿# Sand 璧勬牸棰嗗彇鍣紙SandClaimer锛?
-鎵归噺缁?Cursor 璐﹀彿棰嗗彇 **Grok Bot锛圫and锛?* 璧勬牸鐨勬闈㈠皬宸ュ叿銆俰OS 鐜荤拑娴呰摑椋庣晫闈紝鑷姩璇嗗埆涓ょ token 鏍煎紡锛屾敮鎸佸鍏?JSON銆佹壒閲忛鍙栥€佹壒閲忔坊鍔犺处鍙枫€?
-## 鍔熻兘
+# Infinity（Cursor Grok Bot 工具箱）
 
-- **涓ょ token 鑷姩璇嗗埆**锛歚access_token`锛圝WT锛宍eyJ...`锛変笌 `ws token`锛坄user_01XXXX::eyJ...`锛屽嵆 WorkosCursorSessionToken锛夈€?- **瀵煎叆鏂瑰紡**锛氱洿鎺ョ矘璐达紙姣忚涓€涓紝鍙贩鎺掞級銆佺矘璐?`cursor_accounts_*.json` 鍐呭銆佹垨銆屽鍏ユ枃浠躲€嶉€変竴涓?澶氫釜 JSON銆傛寜 user id 鑷姩鍘婚噸銆?- **鎵归噺棰嗗彇**锛氶€愪釜棰嗗彇骞跺疄鏃舵樉绀烘瘡琛岀姸鎬侊紱宸插紑閫氱煭璺€佸洟闃熷彿鑷姩甯?`teamId`銆佷釜浜哄彿璧拌瘯鐢ㄣ€佸厤璐瑰彿鏍囪銆岄渶缁戝崱銆嶃€?- **鍒锋柊鐘舵€?*锛氬彧璇绘煡璇㈡瘡涓处鍙风殑 Sand 棰濆害涓庢槸鍚﹀紑閫氥€?- **缁曡繃鏈満 DNS 鍔寔**锛氬唴缃?DoH锛?.1.1.1锛夎В鏋?`cursor.com` / `api2.cursor.sh` 鐪熷疄 IP锛屽嵆浣挎湰鏈鸿窇鐫€浼氬姭鎸佽繖浜涘煙鍚嶇殑缃戝叧锛堝 cgw锛変篃鑳界洿杩炵湡瀹?Cursor銆?
-## 杩愯锛堝紑鍙戯級
+管理 Cursor 账号池、批量领取 **Grok Bot（Sand）** 资格、给本机 Cursor 打客户端模式补丁并一键切号的桌面小工具。基于 pywebview（Windows 走 Edge WebView2），界面是 `web/` 下的深色仪表盘，Python 侧通过 `window.pywebview.api` 把能力暴露给前端。
+
+> **仅供学习研究与技术交流，严禁倒卖或收费。** 本项目与 Cursor / Anysphere、xAI / Grok 无任何关联；使用可能违反相关服务条款，风险与后果由使用者自行承担。使用前请先读 [免责声明](DISCLAIMER.md)。
+
+## 功能
+
+- **本机 Cursor 补丁**：打补丁 / 回退 / 「查看补丁情况」；路径留空自动检测，也可手填 `Cursor.exe` 或安装目录。非管理员运行时自动走 UAC 提权子进程。
+- **修复 DNS**：本机开着 Clash 等 fake-ip 代理时，写 hosts 修好 Cursor 域名；另有 DoH 兜底解析（见 `resolve.py`）。
+- **两种 token 自动识别**：`access_token`（JWT，`eyJ...`）与 `ws token`（`user_01XXXX::eyJ...`，即 WorkosCursorSessionToken）。
+- **导入方式**：直接粘贴（每行一个，可混排）、粘贴 `cursor_accounts_*.json` 内容、「导入文件」选一个/多个 JSON、或「探测本机账号」把当前 Cursor 已登录的号加进来。按 user id 自动去重，账号持久化到 `%LOCALAPPDATA%\SandClaimer\accounts.json`。
+- **账号列表**：标签、分组筛选、套餐、Sand 状态与额度一屏可见；并发可调（1-10），支持批量领取与批量刷新状态。
+- **批量领取**：前端逐个调用并实时显示每行状态；已开通短路、团队号自动带上 `teamId`、个人号走试用、免费号标记「需绑卡」。
+- **切号**：把所选账号写入本机 Cursor 登录态（会先关闭正在运行的 Cursor 再重开），可勾选「同时重置机器码」避免多个小号被关联。导入过 refresh token 的账号会一并写入，让 Cursor 能自行续期。
+- **账号详情**：只读查询账期额度、API/Auto 分项与按模型花费。
+- **打开登录浏览器**：用 CDP 把会话 cookie 注入独立 profile 的 Chrome/Edge 并落到领取页，方便手动绑卡或领取。
+
+## 运行（开发）
 
 ```bat
 python -m pip install -r requirements.txt
 python app.py
 ```
 
-> Windows 闇€瑕?**Edge WebView2 杩愯鏃?*锛圵in10/11 涓€鑸嚜甯︼紱缂哄け鏃跺埌寰蒋瀹樼綉瑁呫€孍vergreen WebView2 Runtime銆嶏級銆?
-## 鎵撳寘锛圢uitka 缂栬瘧 + 瀹夎鍖咃級
+> Windows 需要 **Edge WebView2 运行时**（Win10/11 一般自带；缺失时到微软官网装「Evergreen WebView2 Runtime」）。
 
-鍙屽嚮鎴栧懡浠よ杩愯锛?
+## 打包（Nuitka 编译 + 安装包）
+
+双击或命令行运行：
+
 ```bat
 build.bat
 ```
 
-浜х墿锛?
-- `nuitka-out\SandClaimer.exe` 鈥斺€?鍗曟枃浠剁豢鑹茬増锛屽弻鍑诲嵆鐢ㄣ€?- `installer\SandClaimer-Setup-2.0.2.exe` 鈥斺€?涓枃瀹夎鍚戝锛岃鍒?Program Files 骞跺缓寮€濮嬭彍鍗?妗岄潰蹇嵎鏂瑰紡銆?
-`build.bat` 浼氫緷娆★細瑁呬緷璧?鈫?淇ˉ Nuitka 鐨?pywebview 鎻掍欢 鈫?鐢熸垚鍥炬爣 鈫?Nuitka 缂栬瘧 鈫?Inno Setup 鎵撳畨瑁呭寘銆?
-### 涓轰粈涔堢敤 Nuitka锛堣€岄潪 PyInstaller锛?
-- **鍚姩鏇村揩**锛歅ython 婧愮爜琚紪璇戞垚 C/鏈哄櫒鐮侊紝涓嶆槸瑙ｉ噴鎵ц鐨?`.pyc`銆?- **澶╃劧娣锋穯/鍔犲瘑**锛氫骇鐗╂槸鍘熺敓鏈哄櫒鐮侊紝婧愮爜涓嶅彲杩樺師锛沷nefile 杩愯鏃舵妸璐熻浇瑙ｅ帇鍒颁复鏃剁洰褰曞啀鎵ц锛堢浉褰撲簬鍔犲瘑灏佽锛夛紝姣?PyInstaller 鐨勫彲鐩存帴瑙ｅ寘 `.pyc` 寮哄緱澶氥€?- 闇€瑕佹湰鏈鸿鏈?**MSVC锛圴S2022 Build Tools锛?* 渚?Nuitka 缂栬瘧锛涢娆＄紪璇戣緝鎱紝涔嬪悗璧?clcache 缂撳瓨浼氬揩寰堝銆?
-> `patch_plugin.py`锛歂uitka 4.1.3 鐨?pywebview 鎻掍欢鍦?Windows 鐧藉悕鍗曢噷婕忎簡 pywebview 6.2.x 鏂板鐨?`webview.platforms.win32`锛屼細瀵艰嚧鎵撳寘鍚?winforms 鍚庣璧蜂笉鏉ャ€傝鑴氭湰骞傜瓑鍦版妸瀹冭ˉ杩涚櫧鍚嶅崟锛宍build.bat` 宸茶嚜鍔ㄨ皟鐢ㄣ€?>
-> `ChineseSimplified.isl`锛氬畨瑁呭悜瀵肩殑绠€浣撲腑鏂囪瑷€鍖咃紙Inno Setup 榛樿涓嶅惈锛夈€?
-## 棰嗗彇瑙勫垯锛堜笌 Cursor 瀹樻柟涓€鑷达級
+`build.bat` 会依次：装依赖 → 修补 Nuitka 的 pywebview 插件 → 生成图标 → Nuitka 编译 → Inno Setup 打安装包。
 
-- **浠樿垂璐﹀彿**锛圥ro+ / Ultra / Team锛夛細鐩存帴寮€閫氾紝鏃犻渶缁戝崱銆?- **鍏嶈垂璐﹀彿**锛氶鍙栭渶鍏堥獙璇佷俊鐢ㄥ崱锛屽伐鍏蜂細鏍囪銆岄渶缁戝崱銆嶏紙濡傝繑鍥為獙璇侀摼鎺ヤ細涓€骞剁粰鍑猴級銆?- **鍥㈤槦璐﹀彿**锛氳蛋鍥㈤槦閫氶亾骞惰嚜鍔ㄥ甫涓?`teamId`锛堜粠 `get-me` 璇诲彇锛夈€傚洟闃熺骇寮€閫氭槸鍚﹁鐩栧叏閮ㄦ垚鍛樺骇浣嶏紝鍙栧喅浜?Cursor 渚х瓥鐣ャ€?
-## 鐢ㄥ埌鐨勫畼鏂规帴鍙ｏ紙鍧囧疄娴嬬‘璁わ級
+产物：
 
-| 鐢ㄩ€?| 鏂规硶 | 绔偣 | 閴存潈 |
+- `nuitka-out\SandClaimer.exe` —— 单文件绿色版，双击即用。
+- `installer\SandClaimer-Setup-2.2.8.exe` —— 中文安装向导，装到 Program Files 并建开始菜单 / 桌面快捷方式。
+
+只想编译不打安装包时用 `build_win.bat`：默认出 onefile，`fast` 出 standalone 目录（跳过 onefile 打包，快），`deps` 先装依赖再编译。macOS 的 `.app` / `.dmg` 走 `codemagic.yaml` 流水线。
+
+### 为什么用 Nuitka（而非 PyInstaller）
+
+- **启动更快**：Python 源码被编译成 C/机器码，不是解释执行的 `.pyc`。
+- **天然混淆/加密**：产物是原生机器码，源码不可还原；onefile 运行时把负载解压到临时目录再执行（相当于加密封装），比 PyInstaller 的可直接解包 `.pyc` 强得多。
+- 需要本机装有 **MSVC（VS2022 Build Tools）** 供 Nuitka 编译；首次编译较慢，之后走 clcache 缓存会快很多。
+
+> `patch_plugin.py`：Nuitka 的 pywebview 插件（截至 4.1.3）在 Windows 白名单里漏了 pywebview 6.2.x 新增的 `webview.platforms.win32`，会导致打包后 winforms 后端起不来。该脚本幂等地把它补进白名单，`build.bat` 已自动调用。
+>
+> `ChineseSimplified.isl`：安装向导的简体中文语言包（Inno Setup 默认不含）。
+
+## 领取规则（与 Cursor 官方一致）
+
+- **付费账号**（Pro+ / Ultra / Team）：直接开通，无需绑卡。
+- **免费账号**：领取需先验证信用卡，工具会标记「需绑卡」（如返回验证链接会一并给出），可用「打开登录浏览器」手动完成。
+- **团队账号**：走团队通道并自动带上 `teamId`（从 `get-me` 读取）。团队级开通是否覆盖全部成员座位，取决于 Cursor 侧策略。
+
+## 用到的官方接口（2026 实测）
+
+| 用途 | 方法 | 端点 | 鉴权 |
 |---|---|---|---|
-| 鏌ラ搴?| POST | `api2.cursor.sh/aiserver.v1.DashboardService/GetSandUsageStatus` | Bearer accessToken |
-| 鏌ヨ祫鏍?| POST | `cursor.com/api/dashboard/get-sand-access-status` | 浼氳瘽 cookie |
-| 鍙?teamId | POST | `cursor.com/api/dashboard/get-me` | 浼氳瘽 cookie |
-| 涓汉棰嗗彇 | POST | `cursor.com/api/dashboard/start-sand-trial` | cookie + Origin |
-| 鍥㈤槦棰嗗彇 | POST | `cursor.com/api/dashboard/request-sand-team-access`锛坆ody `{teamId}`锛?| cookie + Origin |
+| 查资格 | POST | `cursor.com/api/dashboard/get-sand-access-status` | 会话 cookie + Origin |
+| 查 Bot 额度 | POST | `cursor.com/api/dashboard/get-sand-usage-status` | 会话 cookie + Origin |
+| 查总额度 | GET | `cursor.com/api/usage-summary` | 会话 cookie |
+| 取 teamId | POST | `cursor.com/api/dashboard/get-me` | 会话 cookie + Origin |
+| 个人领取 | POST | `cursor.com/api/dashboard/start-sand-trial` | 会话 cookie + Origin |
+| 团队领取 | POST | `cursor.com/api/dashboard/request-sand-team-access`（body `{teamId}`） | 会话 cookie + Origin |
+| 账期消费 | POST | `cursor.com/api/dashboard/get-current-period-usage` | 会话 cookie + Origin |
+| 套餐名 | GET | `api2.cursor.sh/auth/full_stripe_profile` | Bearer accessToken |
+| 按模型花费 | POST | `api2.cursor.sh/aiserver.v1.DashboardService/GetAggregatedUsageEvents` | Bearer + `application/proto` |
 
-## 瀹夊叏
+`cursor.com` 的 dashboard 系列即使是读也要带 Origin 过 CSRF，否则 403；`api2` 的一元接口必须用 `Content-Type: application/proto`，发 JSON 会 400/415。
 
-- token 鍙湪鏈満鍐呭瓨涓庢湰鏈衡啍Cursor 瀹樻柟涔嬮棿浣跨敤锛屼笉涓婁紶浠讳綍绗笁鏂规湇鍔°€?- 璇峰嬁鎶婂惈 token 鐨?JSON 鎴栨湰宸ュ叿鏃ュ織鍒嗕韩缁欎粬浜恒€?
-## 椤圭洰缁撴瀯
+## 绕过本机 DNS 劫持
+
+有些本地网关工具（如 cgw、Clash fake-ip）会把 `cursor.com` / `api2.cursor.sh` 的 DNS 指向本机中转 IP，导致请求被拦截或用错账号。工具内置 DoH（1.1.1.1）解析这两个域名的真实 IP，仅对它们覆盖 `socket.getaddrinfo`，TLS 的 SNI 与证书校验仍用原域名，安全性不受影响。界面上的「修复 DNS」则是把结果写进 hosts。
+
+## 安全
+
+- token 只在本机内存与本机↔Cursor 官方之间使用，不上传任何第三方服务；本项目没有服务端，也没有遥测上报。
+- 读本机 Cursor 登录态时以只读方式打开 `state.vscdb`（`mode=ro&immutable=1`），Cursor 正在运行也能读且绝不写盘。
+- 请勿把含 token 的 JSON 或本工具日志分享给他人。
+
+## 声明
+
+本项目仅供学习研究与技术交流，与 Cursor / Anysphere、xAI / Grok 及其关联公司无任何隶属、授权或合作关系，相关名称与商标归各自权利人所有。
+
+工具会修改本机客户端文件、hosts 与本机标识，并用你自己提供的凭据调用官方接口，**这些行为可能违反 Cursor 的服务条款**，可能导致账号被限制或封禁、资格被回收、本机 Cursor 异常。是否使用由你自行决定，风险与后果自负；作者不提供任何担保，也不承担任何责任。禁止用于商业用途、倒卖资格，或访问任何不属于你本人的账号与设备。
+
+完整条款见 [DISCLAIMER.md](DISCLAIMER.md)。权利人如认为本仓库侵权，请提 Issue 或邮件联系，核实后会及时删除或下架。
+
+## 项目结构
 
 ```
-sand-claimer/
-鈹溾攢 app.py                # pywebview 鍏ュ彛 + JS 妗ユ帴
-鈹溾攢 sand_api.py           # Cursor Sand 鏌ヨ/棰嗗彇
-鈹溾攢 accounts.py           # token/JSON 瀵煎叆涓庤处鍙疯〃
-鈹溾攢 sand_patch.py         # 鏈満 Cursor 瀹㈡埛绔ā寮忚ˉ涓?/ 鍥為€€
-鈹溾攢 resolve.py            # DoH 缁曡繃 DNS 鍔寔
-鈹溾攢 web/                  # 鐜荤拑椋?UI锛坕ndex.html / style.css / app.js锛?鈹溾攢 make_icon.py          # heguang 鍥炬爣 鈫?澶氬昂瀵?icon.ico
-鈹溾攢 patch_plugin.py       # 淇ˉ Nuitka pywebview 鎻掍欢锛堣ˉ win32锛?鈹溾攢 installer.iss         # Inno Setup 瀹夎鍖呰剼鏈?鈹溾攢 ChineseSimplified.isl # 瀹夎鍚戝绠€浣撲腑鏂囪瑷€鍖?鈹溾攢 icon.ico              # 搴旂敤鍥炬爣锛堝鐢?heguang锛?鈹溾攢 requirements.txt
-鈹斺攢 build.bat             # 涓€閿細缂栬瘧 + 鎵撳畨瑁呭寘
+Cusor-bot-sand/
+├─ app.py                # pywebview 入口 + JS 桥接
+├─ web/                  # 前端 UI（index.html / style.css / app.js）
+├─ accounts.py           # token/JSON 导入、去重、分组与持久化
+├─ sand_api.py           # Sand 资格查询/领取（cursor.com 会话接口）
+├─ account_usage.py      # 账期额度与按模型花费（api2 protobuf）
+├─ local_cursor.py       # 读写本机 Cursor 登录态（探测 / 切号）
+├─ browser_login.py      # CDP 注入 cookie，打开已登录浏览器
+├─ sand_patch.py         # 本机 Cursor 客户端模式补丁 / 回退
+├─ sand_rpc/             # InferenceService/Stream 的 Connect 客户端
+├─ dns_fix.py            # hosts 修复（Clash fake-ip 等劫持）
+├─ resolve.py            # DoH 绕过 DNS 劫持
+├─ elevate.py            # UAC 提权拉起补丁子进程
+├─ patch_install.bat     # 补丁命令行入口（另有 patch_restore / patch_status）
+├─ make_icon.py          # 图标 → 多尺寸 icon.ico
+├─ patch_plugin.py       # 修补 Nuitka pywebview 插件（补 win32）
+├─ installer.iss         # Inno Setup 安装包脚本
+├─ ChineseSimplified.isl # 安装向导简体中文语言包
+├─ build.bat             # 一键：编译 + 打安装包
+├─ build_win.bat         # 仅编译（release / fast / deps）
+├─ codemagic.yaml        # macOS 打 .app / .dmg 的 CI 流水线
+├─ icon.ico              # 应用图标
+└─ requirements.txt
 ```
-

@@ -8,7 +8,7 @@ exit /b
 
 :run
 echo ========================================
-echo  Cursor Grok Bot patch install  v2.2.8
+echo  Cursor Grok Bot patch install  v2.2.9
 echo ========================================
 echo.
 echo ASCII-only bat (cmd GBK). Closes Cursor, patches JS, writes hosts, flushdns.

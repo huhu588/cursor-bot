@@ -124,6 +124,35 @@ def test_apply_agent_runtime_flags_on_roe() -> None:
     assert restored == src
 
 
+def test_agent_flags_match_renamed_object() -> None:
+    """3.18.25 把 featureFlags 对象从 Roe 改名为 xre；按字段签名匹配，不能依赖变量名。"""
+    src = (
+        "const xre={enableEmptyResponseRetry:!0,enableGrepBroadGlobGuard:!0,"
+        "enableReadToolNegativeOffset:!0,enableSandboxSharedBuildCache:!0,"
+        "nalLoopDetection:!0};var c={agentType:1,featureFlags:xre,isDev:!1};"
+    )
+    out, n = apply_agent_runtime_flags(src)
+    assert n >= 1
+    assert "useClientSideSubagent:!0" in out
+    assert "enableMultitaskMode:!0" in out
+    assert out.count(SAND_AGENT_FLAGS_MARKER) == 1
+    again, _ = apply_agent_runtime_flags(out)
+    assert again == out
+    restored, _ = remove_agent_runtime_flags(out)
+    assert restored == src
+
+
+def test_agent_flags_skipped_when_object_unreferenced() -> None:
+    """签名对上但没有 featureFlags:<名> 引用时不注入，避免误伤同形态对象。"""
+    src = (
+        "const zzz={enableEmptyResponseRetry:!0,enableGrepBroadGlobGuard:!0,"
+        "nalLoopDetection:!0};var c={agentType:1};"
+    )
+    out, n = apply_agent_runtime_flags(src)
+    assert n == 0
+    assert out == src
+
+
 def test_legacy_agent_flags_still_removed() -> None:
     src = (
         "const Roe={enableEmptyResponseRetry:!0"
@@ -149,6 +178,8 @@ def main() -> int:
         test_remove_sand_rpc_lite_reversible,
         test_apply_sand_rpc_lite_refreshable,
         test_apply_agent_runtime_flags_on_roe,
+        test_agent_flags_match_renamed_object,
+        test_agent_flags_skipped_when_object_unreferenced,
         test_legacy_agent_flags_still_removed,
     ]
     failed = 0

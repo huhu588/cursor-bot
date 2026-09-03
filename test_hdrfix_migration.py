@@ -199,6 +199,31 @@ def test_478_mode_route_roundtrip() -> None:
     assert restored == src
 
 
+def test_318_http2_gate_roundtrip() -> None:
+    """3.18.x 的 HTTP/2 闸门排在最前，命中就走 connect（sand 必失败），需折成注释。"""
+    src = (
+        'if(!t.managedLocalAvailable)return"managed-local-unavailable";'
+        "try{if(!1===(null===(n=t.isManagedInferenceHttp2Available)||void 0===n?"
+        'void 0:n.call(t)))return"managed-local-http2-unavailable"}'
+        'catch(e){return"managed-local-http2-unavailable"}'
+        'return"userMessageAction"!==e.actionCase?"action-not-supported":void 0'
+    )
+    out, stats = apply_patch_to_content(src)
+    assert stats.sand_rpc >= 1
+    assert "/*SAND_HTTP2_GATE_V1*/" in out
+    # 原文整段被折进 RB 注释：闸门代码只出现在 marker 之后的注释里，不再是活代码
+    head, _sep, tail = out.partition("/*SAND_HTTP2_GATE_V1*/")
+    assert "managed-local-http2-unavailable" not in head
+    assert tail.startswith("/*SAND_HTTP2_GATE_RB:")
+    body, _sep2, rest = tail.partition("*/")
+    assert "isManagedInferenceHttp2Available" in body
+    assert "managed-local-http2-unavailable" not in rest
+    again, _ = apply_patch_to_content(out)
+    assert again == out
+    restored, _rst = remove_patch_from_content(out)
+    assert restored == src
+
+
 def test_478_mode_route_legacy_form_migrates() -> None:
     """2.2.2/2.2.3 装的是「仅放行 0/undefined」形态，重装应升级为 !1 形态，卸载也能还原。"""
     legacy = (
@@ -435,32 +460,51 @@ def test_318_managed_local_gate_ae() -> None:
     assert restored == src
 
 
-def test_live_478_memory_roundtrip() -> None:
-    from pathlib import Path
+import re
+from pathlib import Path
 
-    path = Path(r"D:\GongJu\cursor\resources\app\extensions\cursor-agent-host\dist\478.js")
-    if not path.is_file():
-        print("skip: test_live_478_memory_roundtrip (no 478.js)")
+AGENT_HOST_DIST = Path(
+    r"D:\GongJu\cursor\resources\app\extensions\cursor-agent-host\dist"
+)
+
+
+def _find_bundle(marker: str) -> "Path | None":
+    """按内容定位 bundle：3.17.21 是 477/478.js，3.18.25 已改名为 675/61.js。"""
+    if not AGENT_HOST_DIST.is_dir():
+        return None
+    for p in sorted(AGENT_HOST_DIST.glob("*.js"), key=lambda x: -x.stat().st_size):
+        if marker in p.read_text(encoding="utf-8", errors="replace"):
+            return p
+    return None
+
+
+def test_live_478_memory_roundtrip() -> None:
+    path = _find_bundle("Agent host interaction registry is closed")
+    if path is None:
+        print("skip: test_live_478_memory_roundtrip (未找到路由 bundle)")
         return
+    print(f"   (live 478-like bundle: {path.name})")
     disk = path.read_text(encoding="utf-8", errors="replace")
     # 本机可能已装补丁：先还原成原始内容，再验证「打 → 还原」闭环。
     src, _ = remove_patch_from_content(disk)
     assert "/*SAND_" not in src
-    assert 'e.modelId!==v.w?"model-not-supported":' in src
-    assert 'e.requestedMode!==w.xyI.AGENT?"mode-not-supported":' in src
+    # 版本无关的闸门形态（3.17.21 与 3.18.25 的变量名不同，只断言语义片段）
+    assert re.search(r'e\.requestedMode!==\w+\.xyI\.AGENT\?"mode-not-supported":', src)
     assert '"userMessageAction"!==e.actionCase?"action-not-supported":' in src
-    assert "checkFeatureGate(J)" in src
+    assert re.search(r"checkFeatureGate\(\w+\)", src)
     out, stats = apply_patch_to_content(src)
-    assert stats.model_route == 1
     assert stats.managed_local_route == 1
     assert stats.sand_rpc >= 3
-    assert "!1/*SAND_MODEL_ROUTE_V1*/" in out
     assert 'reason:"sand-client"' in out
     assert "/*SAND_SUBAGENT_ROUTE_V1*/" in out
     assert "!1/*SAND_MODE_ROUTE_V1*/" in out
     assert "/*SAND_ACTION_ROUTE_V1*/" in out
     assert out.count('"mode-not-supported"') == 1
     assert out.count('"action-not-supported"') == 1
+    # 3.17.21 有 `modelId!==<白名单>` 需要绕过；3.18.25 只拒 undefined，补丁自动跳过
+    if 'e.modelId!==v.w?"model-not-supported":' in src:
+        assert stats.model_route == 1
+        assert "!1/*SAND_MODEL_ROUTE_V1*/" in out
     # 对已装盘上内容再打一次：只补缺的 marker，不重复注入；旧 mode 形态升级为 !1
     again, _ = apply_patch_to_content(disk)
     assert again.count("/*SAND_MODE_ROUTE_V1*/") == 1
@@ -470,8 +514,12 @@ def test_live_478_memory_roundtrip() -> None:
     assert again.count("/*SAND_SUBAGENT_RETRY_V1*/") == 1
     assert again.count("/*SAND_INTERACTION_ID_V1*/") == 1
     assert "enableAgentRetries:!1}" not in again
+    # 3.18.x 专属的 HTTP/2 闸门：折进注释后不再是活代码
+    if "isManagedInferenceHttp2Available" in src:
+        assert again.count("/*SAND_HTTP2_GATE_V1*/") == 1
+        head318 = again.partition("/*SAND_HTTP2_GATE_V1*/")[0]
+        assert "managed-local-http2-unavailable" not in head318
     restored, rst = remove_patch_from_content(out)
-    assert rst.model_route == 1
     assert rst.managed_local_route == 1
     assert restored == src
 
@@ -493,41 +541,41 @@ def test_317_local_model_roundtrip() -> None:
 
 
 def test_live_477_memory_roundtrip() -> None:
-    from pathlib import Path
-
-    path = Path(r"D:\GongJu\cursor\resources\app\extensions\cursor-agent-host\dist\477.js")
-    if not path.is_file():
-        print("skip: test_live_477_memory_roundtrip (no 477.js)")
+    path = _find_bundle("taskToolProps:")
+    if path is None:
+        print("skip: test_live_477_memory_roundtrip (未找到 agent-host bundle)")
         return
+    print(f"   (live 477-like bundle: {path.name})")
     disk = path.read_text(encoding="utf-8", errors="replace")
     src, _ = remove_patch_from_content(disk)
     assert "/*SAND_" not in src
-    assert "Unsupported managed local model" in src
     assert "taskToolProps:void 0" in src
     out, stats = apply_patch_to_content(src)
-    assert stats.local_model == 1
-    assert "if(!1/*SAND_LOCAL_MODEL_V1*/" in out
-    assert "new Moe(" in out
+    # 子代理三件套：TASK 注册 + 客户端执行开关 + 前台同步（两个版本都必须有）
     assert "taskToolProps:_sandTtp" in out
     assert "useClientSideSubagent:!0" in out
     assert "defaultSubagentsRunInBackground:!1" in out
+    assert "/*SAND_AGENT_FLAGS_V1*/" in out
     assert stats.ctx_window == 2
     assert "maxTokens:_sandCtxWin(n.maxTokens,this.requestedModel)" in out
-    assert stats.local_agent == 2
     assert "/*SAND_BG_SUMMARY_V1*/" in out
-    assert "/*SAND_MODEL_INFO_V1*/" in out
-    assert '{vendor:"anthropic",isClaude4X:!0,isSonnet4:!0}' not in out
     again, _ = apply_patch_to_content(disk)
     assert again.count("/*SAND_AGENT_FLAGS_V1*/") == 1
     assert again.count("/*SAND_TASK_TOOL_PROPS_V1*/") == 1
     assert again.count("/*SAND_CTX_WINDOW_V1*/") == 2
     assert again.count("/*SAND_BG_SUMMARY_V1*/") == 1
-    assert again.count("/*SAND_MODEL_INFO_V1*/") == 1
     assert again.count("/*SAND_MAX_RETRIES_V1*/") == 1
     assert "defaultSubagentsRunInBackground:!1" in again
     assert "defaultSubagentsRunInBackground:!0" not in again
-    restored, rst = remove_patch_from_content(out)
-    assert rst.local_model == 1
+    # 3.17.21 专属：本地模型白名单 + 写死的 modelInfo；3.18.25 两者都已原生化
+    if "Unsupported managed local model" in src:
+        assert stats.local_model == 1
+        assert "if(!1/*SAND_LOCAL_MODEL_V1*/" in out
+        assert stats.local_agent == 2
+        assert "/*SAND_MODEL_INFO_V1*/" in out
+    else:
+        assert stats.local_agent == 1
+    restored, _rst = remove_patch_from_content(out)
     assert restored == src
 
 
@@ -561,6 +609,7 @@ def main() -> int:
         test_317_model_route_roundtrip,
         test_478_mode_route_roundtrip,
         test_478_mode_route_legacy_form_migrates,
+        test_318_http2_gate_roundtrip,
         test_477_local_agent_config_roundtrip,
         test_477_ctx_window_roundtrip,
         test_retry_resilience_roundtrip,

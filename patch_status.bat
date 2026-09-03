@@ -2,7 +2,7 @@
 cd /d "%~dp0"
 
 echo ========================================
-echo  Cursor patch status  v2.2.8
+echo  Cursor patch status  v2.2.9
 echo ========================================
 echo.
 
