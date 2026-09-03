@@ -1,0 +1,2 @@
+# cursor-bot
+cursor bot
