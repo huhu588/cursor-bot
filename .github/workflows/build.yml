@@ -12,6 +12,9 @@ env:
 jobs:
   windows:
     runs-on: windows-latest
+    env:
+      # runner 控制台是 cp1252，构建脚本会打印中文
+      PYTHONUTF8: "1"
     steps:
       - uses: actions/checkout@v4
 
