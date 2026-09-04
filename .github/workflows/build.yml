@@ -35,7 +35,7 @@ jobs:
         with:
           name: ${{ env.APP_NAME }}-${{ env.APP_VERSION }}-windows
           path: |
-            installer/Infinity-Setup-*.exe
+            installer/Infinity-Setup-${{ env.APP_VERSION }}.exe
             nuitka-out/SandClaimer.exe
           if-no-files-found: error
 
