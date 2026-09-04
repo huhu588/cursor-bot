@@ -15,7 +15,7 @@ rem   2. the output dir is kept between runs so Nuitka reuses its C cache
 rem   3. --lto=no avoids very slow link-time optimization; --jobs uses all cores
 rem   4. packages unused at runtime are excluded from compilation
 
-set VER=2.2.8
+set VER=2.3.5
 set WORK=C:\sandbuild
 set MODE=%~1
 set DO_DEPS=0
@@ -99,9 +99,12 @@ if /I "%MODE%"=="fast" (
   echo done:
   echo   nuitka-out\SandClaimer.exe
   echo   ..\Cursor-bot-%VER%.exe
-  if exist "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" (
+  set "ISCC="
+  if exist "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" set "ISCC=%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe"
+  if exist "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" set "ISCC=C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+  if defined ISCC (
     echo building installer
-    "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss || echo installer failed, exe is still usable
+    "!ISCC!" installer.iss || echo installer failed, exe is still usable
   ) else (
     echo Inno Setup not installed, skipping installer
   )

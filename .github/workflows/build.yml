@@ -1,0 +1,115 @@
+name: Build
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+env:
+  APP_NAME: Infinity
+  APP_VERSION: "2.3.5"
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Ensure Inno Setup
+        shell: cmd
+        run: |
+          if not exist "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" choco install innosetup -y --no-progress
+
+      - name: Build exe + installer
+        shell: cmd
+        run: build_win.bat deps
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}-${{ env.APP_VERSION }}-windows
+          path: |
+            installer/Infinity-Setup-*.exe
+            nuitka-out/SandClaimer.exe
+          if-no-files-found: error
+
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          # pywebview 在 macOS 上走 Cocoa/WebKit，需要 pyobjc
+          python -m pip install pyobjc-core pyobjc-framework-Cocoa pyobjc-framework-WebKit pyobjc-framework-Quartz
+
+      - name: Build .icns icon
+        run: |
+          set -euo pipefail
+          SRC="web/infinity-icon.png"
+          ICONSET="icon.iconset"
+          rm -rf "$ICONSET" && mkdir -p "$ICONSET"
+          for s in 16 32 64 128 256 512; do
+            sips -z $s $s "$SRC" --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
+            d=$((s*2)); sips -z $d $d "$SRC" --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
+          done
+          iconutil -c icns "$ICONSET" -o icon.icns
+
+      - name: Nuitka compile to .app
+        run: |
+          set -euo pipefail
+          python -m nuitka --standalone --assume-yes-for-downloads \
+            --macos-create-app-bundle \
+            --macos-app-name="$APP_NAME" \
+            --macos-app-icon=icon.icns \
+            --macos-app-version="$APP_VERSION" \
+            --enable-plugin=pywebview \
+            --nofollow-import-to=sand_rpc --nofollow-import-to=httpx \
+            --nofollow-import-to=PIL --nofollow-import-to=tkinter \
+            --nofollow-import-to=unittest --nofollow-import-to=doctest \
+            --nofollow-import-to=pydoc --nofollow-import-to=lib2to3 \
+            --nofollow-import-to=setuptools --nofollow-import-to=pip \
+            --nofollow-import-to=pytest --nofollow-import-to=test \
+            --include-data-dir=web=web \
+            --company-name="$APP_NAME" --product-name="$APP_NAME" \
+            --product-version="$APP_VERSION" --file-version="$APP_VERSION.0" \
+            --output-filename="$APP_NAME" \
+            --output-dir=build-mac \
+            app.py
+          cd build-mac
+          BUILT=$(ls -d *.app | head -n1)
+          [ "$BUILT" = "$APP_NAME.app" ] || mv "$BUILT" "$APP_NAME.app"
+
+      - name: Sign (ad-hoc) and create DMG
+        run: |
+          set -euo pipefail
+          cd build-mac
+          # ad-hoc 签名，减少本机 Gatekeeper 拦截；正式分发需要 Apple 开发者证书 + 公证
+          codesign --force --deep --sign - "$APP_NAME.app"
+          DMG="$APP_NAME-$APP_VERSION-macos-${{ matrix.arch }}.dmg"
+          hdiutil create -volname "$APP_NAME" -srcfolder "$APP_NAME.app" -ov -format UDZO "$DMG"
+          ls -la "$DMG"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}-${{ env.APP_VERSION }}-macos-${{ matrix.arch }}
+          path: build-mac/*.dmg
+          if-no-files-found: error

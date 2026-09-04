@@ -213,6 +213,7 @@ textarea:focus {
 
 .row-actions { display: flex; align-items: center; gap: 12px; margin-top: 12px; flex-wrap: wrap; }
 .hint { color: var(--text-faint); font-size: 12px; }
+#patchCompat { margin-top: 4px; }
 .patch-detail { margin: 8px 0 0; padding-left: 18px; color: var(--text-faint); font-size: 12px; line-height: 1.55; }
 .patch-detail li.ok { color: var(--ok); }
 .patch-detail li.warn { color: var(--warn); }

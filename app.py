@@ -96,6 +96,7 @@ def _build_patch_status(layout: sand_patch.CursorLayout, st: sand_patch.PatchSta
     return {
         "ok": True,
         "toolVersion": sand_patch.TOOL_VERSION,
+        "supportedVersions": list(sand_patch.STREAM_CURSOR_VERSIONS),
         "version": layout.version,
         "path": str(layout.install_root),
         "installed": bool(st.installed),

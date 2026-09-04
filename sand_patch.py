@@ -40,7 +40,7 @@ from dns_fix import (
 )
 
 
-TOOL_VERSION = "2.2.9"
+TOOL_VERSION = "2.3.5"
 CONFIG_VERSION = 1
 
 SAND_CLIENT_MARKER = "/*SAND_CLIENT_MODE_V1*/"
@@ -53,6 +53,47 @@ SAND_GLASSFIX_MARKER = "/*SAND_GLASSFIX_V1*/"
 SAND_HDRFIX_MARKER = "/*SAND_HDRFIX_V1*/"
 SAND_HDRFIX_RB_PREFIX = "/*SAND_HDRFIX_RB:"
 SAND_HDRFIX_RB_SUFFIX = "*/"
+SAND_HDRFIX_V2_MARKER = "/*SAND_HDRFIX_V2*/"
+SAND_HDRFIX_V2_RB_PREFIX = "/*SAND_HDRFIX_V2_RB:"
+SAND_HDRFIX_V2_RB_SUFFIX = "*/"
+# AgentService/Run 必须出 ide：Connect 会在 prepareAgentRunRequest 之后再次
+# applyRequestHeaders，单纯在返回前改 ide 会被改回 sand。
+SAND_HDRFIX_V2_FN = (
+    '(function(r){try{var u=String((r&&r.url)||""),s=String((r&&r.service&&r.service.typeName)||"");'
+    'if(/AgentService|\\/agent\\.v1\\./.test(u+s))return"ide"}catch(x){}return"sand"})'
+)
+HEADER_SET_SIMPLE_RE = re.compile(
+    r"([A-Za-z_$][\w$]*)\.header\.set\(\s*([\"'])x-cursor-client-type\2\s*,\s*"
+    r"("
+    r"(?:[A-Za-z_$][\w$]*\s*\?\?\s*)?"
+    r"[\"'](?:ide|sand|glass|agent)[\"']"
+    r"(?:/\*SAND[A-Z0-9_]*_V1\*/)*"
+    r")"
+    r"\)"
+)
+HDRFIX_V2_RB_RE = re.compile(
+    re.escape(SAND_HDRFIX_V2_FN)
+    + r"\([A-Za-z_$][\w$]*\)"
+    + re.escape(SAND_HDRFIX_V2_MARKER)
+    + re.escape(SAND_HDRFIX_V2_RB_PREFIX)
+    + r"(.*?)"
+    + re.escape(SAND_HDRFIX_V2_RB_SUFFIX)
+)
+HDRFIX_V2_REMOVE_RE = re.compile(
+    re.escape(SAND_HDRFIX_V2_FN)
+    + r"\([A-Za-z_$][\w$]*\)"
+    + re.escape(SAND_HDRFIX_V2_MARKER)
+)
+SAND_AGENT_IDE_MARKER = "/*SAND_AGENT_IDE_V1*/"
+AGENT_IDE_INJECT_RE = re.compile(
+    r"(?<!" + re.escape(SAND_AGENT_IDE_MARKER) + r"\);)"
+    r"return\{headers:([A-Za-z_$][\w$]*),credentialFingerprint:"
+)
+AGENT_IDE_REMOVE_RE = re.compile(
+    r'[A-Za-z_$][\w$]*\.set\("x-cursor-client-type","ide"'
+    + re.escape(SAND_AGENT_IDE_MARKER)
+    + r"\);"
+)
 SAND_VERFIX_MARKER = "/*SAND_VERFIX_V1*/"
 SAND_VERFIX_RB_PREFIX = "/*SAND_VERFIX_RB:"
 SAND_VERFIX_RB_SUFFIX = "*/"
@@ -100,6 +141,7 @@ SAND_MODEL_INFO_MARKER = "/*SAND_MODEL_INFO_V1*/"
 SAND_MODEL_INFO_END_MARKER = "/*SAND_MODEL_INFO_END_V1*/"
 SAND_SUBAGENT_RETRY_MARKER = "/*SAND_SUBAGENT_RETRY_V1*/"
 SAND_MAX_RETRIES_MARKER = "/*SAND_MAX_RETRIES_V1*/"
+SAND_RECONNECT_STREAM_MARKER = "/*SAND_RECONNECT_STREAM_V1*/"
 SAND_INTERACTION_ID_MARKER = "/*SAND_INTERACTION_ID_V1*/"
 
 # 网络抖动韧性（2.2.6，3.17.21 日志实测）：
@@ -119,24 +161,12 @@ SIMPLE_REPLACEMENTS: Tuple[Tuple[str, str], ...] = (
         + SAND_MAX_RETRIES_MARKER
         + ',reconnectEndpoint:"InferenceService.Stream"',
     ),
-    # 3.18.25：会话工厂改走 InferenceService.RunInference（不再写 Stream 字面量）。
+    # 3.18.25 / 3.19.7：会话工厂改走 InferenceService.RunInference（不再写 Stream 字面量）。
     (
         'retryLogTag:"managed_local_agent_retries",reconnectEndpoint:"InferenceService.RunInference"',
         'retryLogTag:"managed_local_agent_retries",maxRetries:8'
         + SAND_MAX_RETRIES_MARKER
         + ',reconnectEndpoint:"InferenceService.RunInference"',
-    ),
-    # 478 交互注册表（2.2.7，3.17.21 日志实测 "Unexpected response for create plan query:
-    # askQuestionInteractionResponse"）：key 是 `${turnId}:${query.id}`，但所有 InteractionQuery
-    # 构造时都没设 id（uint32 默认 0），同一 turn 里 AskQuestion 与 CreatePlan 撞成同一个 key，
-    # CreatePlan 拿到 AskQuestion 的（缓存）回包直接抛错。这里在算 key 前给无 id 的 query 分配
-    # 自增 id；pending 里存的克隆和发给 renderer 的都是同一对象，respond 的 id 校验自然匹配。
-    (
-        'if(this.closed)throw new Error("Agent host interaction registry is closed");const m=',
-        'if(this.closed)throw new Error("Agent host interaction registry is closed");'
-        "n.id||(n.id=this._sandQid=(this._sandQid||0)+1)"
-        + SAND_INTERACTION_ID_MARKER
-        + ";const m=",
     ),
 )
 
@@ -305,9 +335,55 @@ CTX_WINDOW_DECL_RE = re.compile(
 # supportsSelfSummary 从 !1 改为 !0。完整 AgentService/Run ↔ InferenceStream 的双向
 # proto 重编码见 sand_rpc/ 模块（Python 参考实现 + 测试），后续可挂本地 bridge。
 AGENT_HOST_MODULE_ANCHOR = "n.d(t,{createAgentHost:()=>Loe});"
-# 3.17.21 导出 Loe；3.18.25 导出 Rre。按 webpack 导出语句匹配，避免写死混淆名。
+# 3.17.21 导出 Loe；3.18.25 导出 Rre；3.19.7 把 createAgentHost 放进更大的 n.d 导出对象。
 AGENT_HOST_MODULE_ANCHOR_RE = re.compile(
-    r"n\.d\(t,\{createAgentHost:\(\)=>[A-Za-z_$][A-Za-z0-9_$]*\}\);"
+    r"n\.d\(t,\{[^{}]*createAgentHost:\(\)=>[A-Za-z_$][A-Za-z0-9_$]*[^{}]*\}\);"
+)
+SAND_TASK_TOOL_PROPS_RB_PREFIX = "/*SAND_TASK_TOOL_PROPS_RB:"
+SAND_TASK_TOOL_PROPS_RB_SUFFIX = "*/"
+# 3.19.7 4883.js：原生已有 taskToolProps，但 getTaskToolConfig 直接抛
+# "managed local loop does not build in-process child AgentConfig"。
+TASK_CONFIG_THROW_RE = re.compile(
+    r"getTaskToolConfig:\(\)=>[A-Za-z_$][A-Za-z0-9_$]*\(this,void 0,void 0,"
+    r"function\*\(\)\{throw new Error\("
+    r'"managed local loop does not build in-process child AgentConfig"'
+    r"\)\}\)"
+)
+_SAND_TTP_GET_CONFIG = (
+    "getTaskToolConfig:async(e,t)=>{"
+    "try{return{agentConfig:{modelId:e},promptSession:void 0,summarizationHandler:void 0}}"
+    "catch(n){return{agentConfig:void 0,promptSession:void 0,summarizationHandler:void 0}}}"
+)
+TASK_CONFIG_THROW_RB_RE = re.compile(
+    re.escape(_SAND_TTP_GET_CONFIG)
+    + re.escape(SAND_TASK_TOOL_PROPS_MARKER)
+    + re.escape(SAND_TASK_TOOL_PROPS_RB_PREFIX)
+    + r"(.*?)"
+    + re.escape(SAND_TASK_TOOL_PROPS_RB_SUFFIX)
+)
+INTERACTION_CLOSED_RE = re.compile(
+    r'if\(this\.closed\)throw new Error\("Agent host interaction registry is closed"\);'
+    r"const ([A-Za-z_$][A-Za-z0-9_$]*)="
+)
+INTERACTION_ID_PATCH = (
+    'if(this.closed)throw new Error("Agent host interaction registry is closed");'
+    "n.id||(n.id=this._sandQid=(this._sandQid||0)+1)"
+    + SAND_INTERACTION_ID_MARKER
+    + ";"
+)
+INTERACTION_ID_REMOVE_RE = re.compile(
+    r"n\.id\|\|\(n\.id=this\._sandQid=\(this\._sandQid\|\|0\)\+1\)"
+    + re.escape(SAND_INTERACTION_ID_MARKER)
+    + r";"
+)
+SAND_SUBAGENT_RETRY_RB_PREFIX = "/*SAND_SUBAGENT_RETRY_RB:"
+SAND_SUBAGENT_RETRY_RB_SUFFIX = "*/"
+ENABLE_AGENT_RETRIES_RB_RE = re.compile(
+    r"subagentModelOverrides:\[\],enableAgentRetries:!0"
+    + re.escape(SAND_SUBAGENT_RETRY_MARKER)
+    + re.escape(SAND_SUBAGENT_RETRY_RB_PREFIX)
+    + r"(.*?)"
+    + re.escape(SAND_SUBAGENT_RETRY_RB_SUFFIX)
 )
 _DOE_PROVIDER_OPTIONS_SIG = (
     "function Doe(e){return void 0===e?{}:{providerOptions:{cursor:{modelName:e}}}}"
@@ -358,6 +434,38 @@ def _read_config_dict_relaxed() -> Dict[str, object]:
     return value if isinstance(value, dict) else {}
 
 
+# 运行模式（2.3.0）：
+#   local  —— 现状：sand 身份 + agent-host managed-local 本地循环，每个模型 step 直接打
+#             InferenceService/Stream；账单每 step 一条。Task 子代理 / 窗口 / 摘要 / 模式 /
+#             续跑由本仓库补丁在本地实现。
+#   server —— sand 身份 + AgentService/agent.v1 分流 ide，不强制 managed-local：
+#             聊天走服务端 agent（一 turn 一条账单）；会员 fetch 伪装绕过 unpaid invoice；
+#             子代理 / 窗口 / 摘要 / 模式 / 续跑由 Cursor 服务端原生提供。
+PATCH_MODE_LOCAL = "local"
+PATCH_MODE_SERVER = "server"
+PATCH_MODES: Tuple[str, ...] = (PATCH_MODE_LOCAL, PATCH_MODE_SERVER)
+_PATCH_MODE_CONFIG_KEY = "mode"
+
+
+def get_patch_mode() -> str:
+    value = _read_config_dict_relaxed().get(_PATCH_MODE_CONFIG_KEY)
+    return value if isinstance(value, str) and value in PATCH_MODES else PATCH_MODE_LOCAL
+
+
+def set_patch_mode(value: str) -> str:
+    mode = (value or "").strip().lower()
+    if mode not in PATCH_MODES:
+        raise SandToolError(f"未知模式：{value}（可选：{' / '.join(PATCH_MODES)}）")
+    cfg = _read_config_dict_relaxed()
+    cfg[_PATCH_MODE_CONFIG_KEY] = mode
+    cfg["version"] = CONFIG_VERSION
+    cfg.setdefault("cursorInstallRoot", "")
+    cfg.setdefault("lastVerifiedVersion", "")
+    cfg["updatedAt"] = datetime.now(timezone.utc).isoformat()
+    _write_json_atomic(_config_path(), cfg)
+    return mode
+
+
 def _drop_legacy_full_loop_key() -> None:
     """清掉 2.1.2 遗留的 fullLoop 配置项，防止旧配置影响后续安装判定。"""
     cfg = _read_config_dict_relaxed()
@@ -406,10 +514,10 @@ SAND_AGENT_RUNTIME_FLAGS: Tuple[Tuple[str, str], ...] = (
     # Ask 模式：sandbox 可用时 Shell 进只读沙箱（无 sandbox 时仅靠 reminder 约束，与原生一致）。
     ("enableReadonlyShell", "!0"),
 )
-# 该对象的变量名每次打包都会变（3.17.21 是 Roe，3.18.25 是 xre），但字段内容稳定。
-# 按内容签名定位，再用捕获到的名字确认 featureFlags:<名> 确实引用了它。
+# 该对象的变量名每次打包都会变（3.17.21 是 Roe，3.18.25 是 xre，3.19.7 是 be），
+# 且 3.19.7 把 enableEmptyResponseRetry 挪到对象中间。按字段签名定位。
 ROE_DECL_RE = re.compile(
-    r"const ([A-Za-z_$][A-Za-z0-9_$]*)=\{enableEmptyResponseRetry:[^{}]*\}"
+    r"const ([A-Za-z_$][A-Za-z0-9_$]*)=\{(?:[^{}]*?,)?enableEmptyResponseRetry:[^{}]*\}"
 )
 
 # exec-bridge（移植自 SandClientMode 1.3.0，本机 3.17.21 锚点已实测命中）：
@@ -445,7 +553,36 @@ BR_RESOURCE_GET_PATCHED = (
 PATCH_CLIENT_TYPE = "sand"
 SAND_CLIENT_VERSION = "0.18.0"
 SAND_BOX_NAMESPACE = "prod"
-STREAM_CURSOR_VERSION = "3.18.25"
+# 已验证可打补丁的 Cursor 版本（按发布时间）。新版本只追加，不覆盖旧锚点。
+STREAM_CURSOR_VERSIONS: Tuple[str, ...] = (
+    "3.17.21",
+    "3.18.9",
+    "3.18.25",
+    "3.19.7",
+)
+STREAM_CURSOR_VERSION = STREAM_CURSOR_VERSIONS[-1]
+
+
+def supported_cursor_versions_label() -> str:
+    return " / ".join(STREAM_CURSOR_VERSIONS)
+
+
+def _cursor_major_minor(version: str) -> Tuple[int, int]:
+    parts = (version or "").split(".")
+    try:
+        return int(parts[0]), int(parts[1]) if len(parts) > 1 else 0
+    except ValueError:
+        return 0, 0
+
+
+def _cursor_needs_model_whitelist(version: str) -> bool:
+    """3.17.x 把 managed-local 模型白名单写死，补丁必须打上；3.18+ 锚点已消失。"""
+    return _cursor_major_minor(version) == (3, 17)
+
+
+def _cursor_needs_direct_stream(version: str) -> bool:
+    """3.19.x 原生会话走 RunInference；sand 身份会被该 RPC 拒绝，必须注入 ve→Stream。"""
+    return _cursor_major_minor(version) == (3, 19)
 
 # 会员伪装 + 模型列表解锁注入：拦截 renderer 里的 fetch，
 #   - 会员/用量/Stripe 类响应把 membershipType 等改成 pro（注意：full_stripe_profile 是 text/plain + 数组！）
@@ -455,10 +592,10 @@ SAND_MEMBERSHIP_SNIPPET = (
     SAND_MEMBERSHIP_MARKER
     + '(function(){try{var G=(typeof globalThis!=="undefined")?globalThis:(typeof self!=="undefined"?self:this);'
     + 'if(!G||G.__sandMemPatch)return;G.__sandMemPatch=1;'
-    + 'var MEM={membershipType:"enterprise",membership_type:"enterprise",isTeamMember:true,teamId:28945905,teamMembershipType:"SELF_SERVE",subscriptionStatus:"active",subscription_status:"active"};'
+    + 'var MEM={membershipType:"enterprise",membership_type:"enterprise",isTeamMember:true,teamId:28945905,teamMembershipType:"SELF_SERVE",subscriptionStatus:"active",subscription_status:"active",hasUnpaidMidMonthInvoice:false,has_unpaid_mid_month_invoice:false,unpaidInvoice:false,isPaid:true};'
     + 'function dm(a,b){if(a===null||typeof a!=="object")return a;for(var k in b){var v=b[k];'
     + 'if(v&&typeof v==="object"&&!Array.isArray(v)){a[k]=dm(typeof a[k]==="object"&&a[k]?a[k]:{},v);}else{a[k]=v;}}return a;}'
-    + 'function isMem(u){try{return /membership|usage-summary|dashboard\\/get-me|auth\\/(me|full_stripe|stripe_profile)|GetUserInfo|getUserPrivilege|hard-limit/i.test(u);}catch(e){return false;}}'
+    + 'function isMem(u){try{return /membership|usage-summary|dashboard\\/get-me|auth\\/(me|full_stripe|stripe_profile)|GetUserInfo|getUserPrivilege|hard-limit|invoice|plan-usage/i.test(u);}catch(e){return false;}}'
     + 'function isModels(u){try{return /AvailableModels|available-models/i.test(u);}catch(e){return false;}}'
     + 'function pmod(b){try{var arr=(b&&b.models)||(b&&b.data&&b.data.models);if(Array.isArray(arr)){'
     + 'for(var i=0;i<arr.length;i++){var m=arr[i];if(m&&typeof m==="object"){m.defaultOn=true;m.default_on=true;}}}}catch(e){}return b;}'
@@ -514,9 +651,18 @@ TARGET_SPECS: Tuple[Tuple[str, Optional[str]], ...] = (
     ("extensions/cursor-agent-host/dist/675.js", None),
     ("extensions/cursor-agent-host/dist/478.js", None),
     ("extensions/cursor-agent-host/dist/477.js", None),
-    # 3.18.25：478.js 重打包为 61.js（managed-local 路由 / 交互注册表 / client-type header）。
+    # 3.18.25：478.js 重打包为 61.js；3.19.7 再改为 9909.js / 4883.js。
+    # layout_from_path 仍会扫描 agent-host/dist/*.js，这里只列常见历史名。
     ("extensions/cursor-agent-host/dist/61.js", None),
+    ("extensions/cursor-agent-host/dist/9909.js", None),
+    ("extensions/cursor-agent-host/dist/4883.js", None),
+    (
+        "out/vs/code/electron-utility/alwaysLocalSingleton/alwaysLocalSingletonMain.js",
+        None,
+    ),
 )
+
+AGENT_HOST_DIST_REL = "extensions/cursor-agent-host/dist"
 
 EXT_HOST_REL = "out/vs/workbench/api/node/extensionHostProcess.js"
 
@@ -669,6 +815,10 @@ class PatchStatus:
     sand_rpc_markers: int = 0
     ctx_window_markers: int = 0
     local_agent_markers: int = 0
+    membership_markers: int = 0
+    hdrfix_v2_markers: int = 0
+    renderer_unlock_markers: int = 0
+    cursor_version: str = ""
     dns_hosts_installed: bool = False
     dns_hijacked: bool = False
 
@@ -693,6 +843,9 @@ class PatchStatus:
             + self.sand_rpc_markers
             + self.ctx_window_markers
             + self.local_agent_markers
+            + self.membership_markers
+            + self.hdrfix_v2_markers
+            + self.renderer_unlock_markers
             > 0
         )
 
@@ -713,14 +866,22 @@ class PatchStatus:
                 and self.managed_local_route_markers > 0
                 and self.direct_stream_markers > 0
             )
-        return (
+        core = (
             identity_ok
             and self.local_runtime_load_markers > 0
             and self.move_exec_markers > 0
             and self.managed_local_route_markers > 0
-            and self.model_route_markers > 0
-            and self.local_model_markers > 0
         )
+        if not core:
+            return False
+        # 3.17.21 仍有模型白名单锚点，必须打上；3.18+ 锚点不存在，不能当硬条件。
+        if _cursor_needs_model_whitelist(self.cursor_version):
+            return self.model_route_markers > 0 and self.local_model_markers > 0
+        # 3.19.x 仅打闸门会误报 OK：会话仍走 RunInference，服务端返回
+        # “Sand traffic is not supported on this endpoint”。
+        if _cursor_needs_direct_stream(self.cursor_version):
+            return self.direct_stream_markers > 0
+        return True
 
 
 def _compile_client_rules() -> Tuple[Tuple[str, re.Pattern[str]], ...]:
@@ -783,6 +944,20 @@ MANAGED_LOCAL_RB_RE = re.compile(
     + re.escape(SAND_MANAGED_LOCAL_RB_SUFFIX)
     + r'\{runtime:"managed-local",reason:"sand-client"\}\}catch\(e\)'
 )
+# 3.19.7 9909.js：闸门拆成「不可用 / 读失败 / 抛错 / gate-off」多段 return connect，
+# 不再是 3.17/3.18 的 checkFeatureGate 三元。把会改道 connect 的两段 if-return
+# 折进注释，后面仍走 v() 资格函数（HTTP2 / action / mode 补丁继续生效）。
+MANAGED_LOCAL_319_RE = re.compile(
+    r'if\(!e\.managedLocalAvailable\)return\{runtime:"connect",reason:"managed-local-unavailable"\}'
+    r"|"
+    r'if\(![A-Za-z_$][A-Za-z0-9_$]*\)return\{runtime:"connect",reason:"gate-off"\}'
+)
+MANAGED_LOCAL_319_RB_RE = re.compile(
+    re.escape(SAND_MANAGED_LOCAL_ROUTE_MARKER)
+    + re.escape(SAND_MANAGED_LOCAL_RB_PREFIX)
+    + r"(if\(![^{;]+\{runtime:\"connect\",reason:\"(?:gate-off|managed-local-unavailable)\"\})"
+    + re.escape(SAND_MANAGED_LOCAL_RB_SUFFIX)
+)
 MODEL_NOT_SUPPORTED_RE = re.compile(
     r'e\.modelId!==[A-Za-z_$][A-Za-z0-9_$]*\.[A-Za-z_$][A-Za-z0-9_$]*'
     r'\?"model-not-supported":'
@@ -801,8 +976,24 @@ MODEL_ROUTE_RB_RE = re.compile(
 # 的 Doe() 本身带 Plan/Ask/Project 的 prompt 与工具切换，所以整段条件置 !1，原文进 RB。
 # 2.2.2/2.2.3 曾用「仅放行 0/undefined」形态，MODE_ROUTE_LEGACY_RB_RE 负责识别并还原。
 MODE_NOT_SUPPORTED_RE = re.compile(
-    r'e\.requestedMode!==[A-Za-z_$][A-Za-z0-9_$]*\.[A-Za-z_$][A-Za-z0-9_$]*\.AGENT'
+    r'e\.(?:requestedMode|conversationMode)!==[A-Za-z_$][A-Za-z0-9_$]*'
+    r'\.[A-Za-z_$][A-Za-z0-9_$]*\.AGENT'
     r'\?"mode-not-supported":'
+)
+# 3.19.7：用户消息的模式闸门改成 IIFE，AGENT 或「托管子代理 + UNSPECIFIED」才放行。
+# 真值分支才继续跑；所以把条件置 !0（与 3.17 的「!== AGENT 置 !1」极性相反）。
+MODE_HOSTED_IIFE_RE = re.compile(
+    r"function\(e\)\{return e\.requestedMode===[A-Za-z_$][A-Za-z0-9_$]*"
+    r"\.[A-Za-z_$][A-Za-z0-9_$]*\.AGENT"
+    r"\|\|e\.isHostedSubagentChild&&e\.requestedMode===[A-Za-z_$][A-Za-z0-9_$]*"
+    r"\.[A-Za-z_$][A-Za-z0-9_$]*\.UNSPECIFIED\}\(e\)"
+)
+MODE_ROUTE_319_RB_RE = re.compile(
+    r"!0"
+    + re.escape(SAND_MODE_ROUTE_MARKER)
+    + re.escape(SAND_MODE_ROUTE_RB_PREFIX)
+    + r"(.*?)"
+    + re.escape(SAND_MODE_ROUTE_RB_SUFFIX)
 )
 MODE_ROUTE_RB_RE = re.compile(
     r"!1"
@@ -832,6 +1023,12 @@ SUBAGENT_RUN_OPTIONS_ORIGINAL = (
 SUBAGENT_RUN_OPTIONS_RE = re.compile(
     re.escape(SUBAGENT_RUN_OPTIONS_ORIGINAL)
     + r"(?:\|\|!0===e\.runOptions\.directMetaParentChildSubagent)?"
+)
+# 3.19.7：subagentTypeName 改成 isHostedSubagentChild（有助于放行 mode=0），
+# 但 directMetaParentChildSubagent 仍会写成 unsupportedRunOptionReason，子 turn 变 runtime:fail。
+DIRECT_META_GATE_RE = re.compile(
+    r"!0===l\.directMetaParentChildSubagent"
+    r'(?=\?"direct-meta-subagent-not-supported":)'
 )
 SUBAGENT_ROUTE_RB_RE = re.compile(
     r"!1"
@@ -907,6 +1104,8 @@ AGENT_HOST_IDENTITY_PATCHED = (
 DIRECT_STREAM_ANCHORS: Tuple[str, ...] = (
     "function hre(e){return t=>{return n=this,o=void 0,s=function*(){",
     "function gre(e){return t=>{return n=this,o=void 0,s=function*(){",
+    # 3.19.7 4883.js：原生 ve() 握手走 e.runInference（服务端拒 sand）。
+    "function ve(e){return t=>{return n=this,r=void 0,s=function*(){",
 )
 DIRECT_STREAM_ANCHOR = DIRECT_STREAM_ANCHORS[0]
 ENABLE_AGENT_RETRIES_318_RE = re.compile(
@@ -980,16 +1179,29 @@ def remove_agent_runtime_flags(content: str) -> Tuple[str, int]:
     return next_content, new_n + old_n + residual
 
 
+def _is_feature_flags_object(content: str, name: str) -> bool:
+    if f"featureFlags:{name}" in content:
+        return True
+    # 3.19.7：g=null!==(l=t.featureFlags)&&void 0!==l?l:be
+    return bool(
+        re.search(
+            rf"featureFlags\)&&void 0!==[A-Za-z_$][A-Za-z0-9_$]*"
+            rf"\?[A-Za-z_$][A-Za-z0-9_$]*:{re.escape(name)}\b",
+            content,
+        )
+    )
+
+
 def apply_agent_runtime_flags(content: str) -> Tuple[str, int]:
     """往 managed-local 运行期 featureFlags 对象追加客户端子代理开关。
 
-    对象在 3.17.21 叫 Roe、3.18.25 叫 xre，故按字段签名匹配而非变量名。
+    对象在 3.17.21 叫 Roe、3.18.25 叫 xre、3.19.7 叫 be，故按字段签名匹配而非变量名。
     """
     next_content, removed = remove_agent_runtime_flags(content)
     match = ROE_DECL_RE.search(next_content)
     if match is None:
         return next_content, removed
-    if f"featureFlags:{match.group(1)}" not in next_content:
+    if not _is_feature_flags_object(next_content, match.group(1)):
         return next_content, removed
     fields = ",".join(
         f"{name}:{value}" for name, value in SAND_AGENT_RUNTIME_FLAGS
@@ -1075,10 +1287,121 @@ def _find_direct_stream_anchor(content: str) -> Optional[str]:
     return None
 
 
+def _is_319_stream_session_factory(content: str) -> bool:
+    return (
+        "class J{constructor(e,t,n,o){this.client=e,this.requestedModel=t" in content
+        and "new o.Ycw(" in content
+    )
+
+
+def _apply_runinference_reconnect_to_stream(content: str) -> Tuple[str, int]:
+    """3.19.7：ve→Stream 之后，重连字面量也必须离开 RunInference，否则重试仍打拒 sand 的 RPC。"""
+    if SAND_DIRECT_STREAM_MARKER not in content:
+        return content, 0
+    if SAND_RECONNECT_STREAM_MARKER in content:
+        return content, 0
+    if not _is_319_stream_session_factory(content):
+        return content, 0
+    rewritten = (
+        'retryLogTag:"managed_local_agent_retries",maxRetries:8'
+        + SAND_MAX_RETRIES_MARKER
+        + ',reconnectEndpoint:"InferenceService.Stream"'
+        + SAND_RECONNECT_STREAM_MARKER
+    )
+    already_max = (
+        'retryLogTag:"managed_local_agent_retries",maxRetries:8'
+        + SAND_MAX_RETRIES_MARKER
+        + ',reconnectEndpoint:"InferenceService.RunInference"'
+    )
+    if already_max in content:
+        return content.replace(already_max, rewritten, 1), 1
+    raw = (
+        'retryLogTag:"managed_local_agent_retries",'
+        'reconnectEndpoint:"InferenceService.RunInference"'
+    )
+    if raw in content:
+        return content.replace(raw, rewritten, 1), 1
+    return content, 0
+
+
+def _remove_runinference_reconnect_to_stream(content: str) -> Tuple[str, int]:
+    if SAND_RECONNECT_STREAM_MARKER not in content:
+        return content, 0
+    rewritten = (
+        'retryLogTag:"managed_local_agent_retries",maxRetries:8'
+        + SAND_MAX_RETRIES_MARKER
+        + ',reconnectEndpoint:"InferenceService.Stream"'
+        + SAND_RECONNECT_STREAM_MARKER
+    )
+    original = (
+        'retryLogTag:"managed_local_agent_retries",'
+        'reconnectEndpoint:"InferenceService.RunInference"'
+    )
+    if rewritten in content:
+        return content.replace(rewritten, original), 1
+    next_content = content.replace(SAND_RECONNECT_STREAM_MARKER, "")
+    next_content = next_content.replace(
+        'reconnectEndpoint:"InferenceService.Stream"',
+        'reconnectEndpoint:"InferenceService.RunInference"',
+        1,
+    )
+    return next_content, 1
+
+
+def _direct_stream_vendor_object_js(*, extra_319: bool = False) -> str:
+    extra = (
+        'isGrok46ProductPrompt:i.includes("grok-4.6")||i.includes("grok4.6"),'
+        if extra_319
+        else ""
+    )
+    return (
+        "a={vendor:i.includes(\"grok\")?\"xai\":i.includes(\"gemini\")?\"gemini\":"
+        "i.includes(\"claude\")||i.includes(\"opus\")||i.includes(\"sonnet\")||i.includes(\"fable\")?"
+        "\"anthropic\":i.includes(\"gpt\")||i.includes(\"codex\")?\"openai\":\"unknown\","
+        'promptVersion:"latest",reasoningEffort:r.get("effort"),'
+        'isGrok45ProductPrompt:i.includes("grok"),'
+        + extra
+        + 'isClaude4x:i.includes("claude")||i.includes("opus")||i.includes("sonnet")||i.includes("fable"),'
+        'isFable5:i.includes("fable-5"),'
+        'isOpus5:i.includes("opus-5")||i.includes("opus5"),'
+        'isOpus48:i.includes("opus-4.8")||i.includes("opus48"),'
+        'isOpus46:i.includes("opus-4.6")||i.includes("opus46"),'
+        'isOpus45:i.includes("opus-4.5")||i.includes("opus45"),'
+        'isSonnet45:i.includes("sonnet-4.5")||i.includes("sonnet45"),'
+        'isSonnet4:i.includes("sonnet-4")||i.includes("sonnet4"),'
+        'isGemini3:i.includes("gemini-3")||i.includes("gemini3"),'
+        'isGpt56:i.includes("gpt-5.6")||i.includes("gpt5.6"),'
+        'isGpt55:i.includes("gpt-5.5")||i.includes("gpt5.5"),'
+        'isGpt54:i.includes("gpt-5.4")||i.includes("gpt5.4"),'
+        'isGpt53Codex:i.includes("gpt-5.3-codex"),'
+        'isGpt52Codex:i.includes("gpt-5.2-codex"),'
+        'isCodexFamily:i.includes("codex"),isGpt5Family:i.includes("gpt-5")},'
+    )
+
+
 def _direct_stream_injection(content: str = "") -> str:
     session_ctor = "Joe"
     resolved_fn = "cre"
     meta_fn = "nre"
+    # 3.19.7 4883.js：会话类 J + o.Ycw；无 RunInference 握手时需本地 oe() 合成 metadata。
+    if _is_319_stream_session_factory(content):
+        return (
+            "{"
+            + SAND_DIRECT_STREAM_MARKER
+            + 'const n=t.requestedModel;'
+            'if(void 0===n)throw new Error("Sand direct Stream requires requestedModel");'
+            'const mid=String(n.modelId||""),i=mid.toLowerCase(),'
+            'r=new Map(n.parameters.map(e=>[e.id,e.value])),'
+            + _direct_stream_vendor_object_js(extra_319=True)
+            + "s=new J(e,n,void 0,void 0).getSession(),"
+            + "p={getExecutor:e=>new o.Ycw(s.getExecutor(e))};"
+            + "return{promptSession:s,promptToolSession:p,attempt:{resolvedModel:n,"
+            + "supportsSelfSummary:!0"
+            + SAND_SELF_SUMMARY_MARKER
+            + ",routedModelDisplayName:mid,"
+            + "resolvedModelMetadata:{promptModelInfo:oe(a,mid)},finish:()=>Promise.resolve()}}"
+            + "}"
+        )
     # 3.18.25 675.js：会话工厂是 tre；Joe 变成了 message-list 辅助类。
     if "class tre{constructor(e,t,n,o){this.client=e,this.requestedModel=t" in content:
         session_ctor = "tre"
@@ -1097,33 +1420,14 @@ def _direct_stream_injection(content: str = "") -> str:
         'if(void 0===n)throw new Error("Sand direct Stream requires requestedModel");'
         'const o=String(n.modelId||""),i=o.toLowerCase(),'
         'r=new Map(n.parameters.map(e=>[e.id,e.value])),'
-        f"s=new {session_ctor}(e,n,void 0,void 0).getSession(),"
-        'p={getExecutor:e=>new RK(s.getExecutor(e))},'
-        'a={vendor:i.includes("grok")?"xai":i.includes("gemini")?"gemini":'
-        'i.includes("claude")||i.includes("opus")||i.includes("sonnet")||i.includes("fable")?'
-        '"anthropic":i.includes("gpt")||i.includes("codex")?"openai":"unknown",'
-        'promptVersion:"latest",reasoningEffort:r.get("effort"),'
-        'isGrok45ProductPrompt:i.includes("grok"),'
-        'isClaude4x:i.includes("claude")||i.includes("opus")||i.includes("sonnet")||i.includes("fable"),'
-        'isFable5:i.includes("fable-5"),'
-        'isOpus5:i.includes("opus-5")||i.includes("opus5"),'
-        'isOpus48:i.includes("opus-4.8")||i.includes("opus48"),'
-        'isOpus46:i.includes("opus-4.6")||i.includes("opus46"),'
-        'isOpus45:i.includes("opus-4.5")||i.includes("opus45"),'
-        'isSonnet45:i.includes("sonnet-4.5")||i.includes("sonnet45"),'
-        'isSonnet4:i.includes("sonnet-4")||i.includes("sonnet4"),'
-        'isGemini3:i.includes("gemini-3")||i.includes("gemini3"),'
-        'isGpt56:i.includes("gpt-5.6")||i.includes("gpt5.6"),'
-        'isGpt55:i.includes("gpt-5.5")||i.includes("gpt5.5"),'
-        'isGpt54:i.includes("gpt-5.4")||i.includes("gpt5.4"),'
-        'isGpt53Codex:i.includes("gpt-5.3-codex"),'
-        'isGpt52Codex:i.includes("gpt-5.2-codex"),'
-        'isCodexFamily:i.includes("codex"),isGpt5Family:i.includes("gpt-5")};'
-        f"return{{promptSession:s,promptToolSession:p,attempt:{{resolvedModel:{resolved_fn}(n),"
-        'supportsSelfSummary:!0'
+        + _direct_stream_vendor_object_js(extra_319=False)
+        + f"s=new {session_ctor}(e,n,void 0,void 0).getSession(),"
+        + 'p={getExecutor:e=>new RK(s.getExecutor(e))},'
+        + f"return{{promptSession:s,promptToolSession:p,attempt:{{resolvedModel:{resolved_fn}(n),"
+        + 'supportsSelfSummary:!0'
         + SAND_SELF_SUMMARY_MARKER
         + ',routedModelDisplayName:o,'
-        f"resolvedModelMetadata:{meta_fn}(a,o),finish:()=>Promise.resolve()}}}}"
+        + f"resolvedModelMetadata:{meta_fn}(a,o),finish:()=>Promise.resolve()}}}}"
         + "}"
     )
 
@@ -1177,25 +1481,38 @@ def _strip_sand_ttp_decl(content: str) -> Tuple[str, int]:
 
 
 def apply_sand_rpc_lite(content: str) -> Tuple[str, int]:
-    """477.js / 675.js：注入 taskToolProps，使 managed-local 路径能注册 TASK 工具。"""
+    """477.js / 675.js / 4883.js：让 managed-local 路径能注册并执行 TASK 工具。"""
     next_content, removed = remove_sand_rpc_lite(content)
-    if TASK_TOOL_PROPS_VOID not in next_content:
-        return next_content, removed
     count = removed
-    anchor = _agent_host_module_anchor(next_content)
-    decl = _task_tool_props_decl(next_content)
-    if anchor and TASK_TOOL_PROPS_DECL_PREFIX not in next_content:
-        next_content = next_content.replace(
-            anchor,
-            anchor + decl,
-            1,
-        )
-        count += 1
     if TASK_TOOL_PROPS_VOID in next_content:
-        next_content = next_content.replace(
-            TASK_TOOL_PROPS_VOID, TASK_TOOL_PROPS_REF, 1
+        anchor = _agent_host_module_anchor(next_content)
+        decl = _task_tool_props_decl(next_content)
+        if anchor and TASK_TOOL_PROPS_DECL_PREFIX not in next_content:
+            next_content = next_content.replace(
+                anchor,
+                anchor + decl,
+                1,
+            )
+            count += 1
+        if TASK_TOOL_PROPS_VOID in next_content:
+            next_content = next_content.replace(
+                TASK_TOOL_PROPS_VOID, TASK_TOOL_PROPS_REF, 1
+            )
+            count += 1
+    if SAND_TASK_TOOL_PROPS_MARKER not in next_content:
+        def _replace_throw(match: re.Match[str]) -> str:
+            return (
+                _SAND_TTP_GET_CONFIG
+                + SAND_TASK_TOOL_PROPS_MARKER
+                + SAND_TASK_TOOL_PROPS_RB_PREFIX
+                + match.group(0)
+                + SAND_TASK_TOOL_PROPS_RB_SUFFIX
+            )
+
+        next_content, n_throw = TASK_CONFIG_THROW_RE.subn(
+            _replace_throw, next_content, count=1
         )
-        count += 1
+        count += n_throw
     return next_content, count
 
 
@@ -1224,13 +1541,29 @@ def apply_simple_replacements(content: str) -> Tuple[str, int]:
         next_content = next_content.replace(original, patched, 1)
         count += 1
     if SAND_SUBAGENT_RETRY_MARKER not in next_content:
+        def _force_retries(match: re.Match[str]) -> str:
+            return (
+                "subagentModelOverrides:[],enableAgentRetries:!0"
+                + SAND_SUBAGENT_RETRY_MARKER
+                + SAND_SUBAGENT_RETRY_RB_PREFIX
+                + match.group(0)
+                + SAND_SUBAGENT_RETRY_RB_SUFFIX
+            )
+
         next_content, n318 = ENABLE_AGENT_RETRIES_318_RE.subn(
-            "subagentModelOverrides:[],enableAgentRetries:!0"
-            + SAND_SUBAGENT_RETRY_MARKER,
+            _force_retries,
             next_content,
             count=1,
         )
         count += n318
+    if SAND_INTERACTION_ID_MARKER not in next_content:
+        def _assign_interaction_id(match: re.Match[str]) -> str:
+            return INTERACTION_ID_PATCH + "const " + match.group(1) + "="
+
+        next_content, n_id = INTERACTION_CLOSED_RE.subn(
+            _assign_interaction_id, next_content, count=1
+        )
+        count += n_id
     return next_content, count
 
 
@@ -1242,6 +1575,10 @@ def remove_simple_replacements(content: str) -> Tuple[str, int]:
         if n:
             next_content = next_content.replace(patched, original)
             count += n
+    next_content, n_rb = ENABLE_AGENT_RETRIES_RB_RE.subn(
+        lambda match: match.group(1), next_content
+    )
+    count += n_rb
     if SAND_SUBAGENT_RETRY_MARKER in next_content:
         next_content, n318 = re.subn(
             r"subagentModelOverrides:\[\],enableAgentRetries:!0"
@@ -1250,8 +1587,9 @@ def remove_simple_replacements(content: str) -> Tuple[str, int]:
             next_content,
             count=1,
         )
-        # 上面写死 u/v 只覆盖 3.18.25 当前包；若没还原成 ternary，再剥 marker。
         count += n318
+    next_content, n_id = INTERACTION_ID_REMOVE_RE.subn("", next_content)
+    count += n_id
     for marker in (
         SAND_SUBAGENT_RETRY_MARKER,
         SAND_MAX_RETRIES_MARKER,
@@ -1331,6 +1669,10 @@ def remove_ctx_window(content: str) -> Tuple[str, int]:
 def remove_sand_rpc_lite(content: str) -> Tuple[str, int]:
     next_content = content
     count = 0
+    next_content, throw_n = TASK_CONFIG_THROW_RB_RE.subn(
+        lambda match: match.group(1), next_content
+    )
+    count += throw_n
     if TASK_TOOL_PROPS_REF in next_content:
         next_content = next_content.replace(
             TASK_TOOL_PROPS_REF, TASK_TOOL_PROPS_VOID, 1
@@ -1659,6 +2001,26 @@ def layout_from_path(value: Union[str, Path]) -> CursorLayout:
                 if not _is_within(target_real, app_root):
                     raise SandToolError(f"目标文件符号链接逃逸：{target}")
                 targets.append(target_real)
+
+            seen_targets = {_path_key(t) for t in targets}
+            dist_dir = app_root.joinpath(*AGENT_HOST_DIST_REL.split("/"))
+            if dist_dir.is_dir():
+                for chunk in sorted(dist_dir.glob("*.js")):
+                    if chunk.name == "main.js" or chunk.name.endswith("-worker.js"):
+                        continue
+                    if not chunk.is_file():
+                        continue
+                    try:
+                        chunk_real = chunk.resolve(strict=True)
+                    except (FileNotFoundError, OSError):
+                        continue
+                    if not _is_within(chunk_real, app_root):
+                        continue
+                    if _path_key(chunk_real) in seen_targets:
+                        continue
+                    seen_targets.add(_path_key(chunk_real))
+                    targets.append(chunk_real)
+
             if not targets:
                 raise SandToolError(
                     "Cursor 使用 app.asar 或当前版本没有可识别的 Sand 目标文件"
@@ -2000,7 +2362,187 @@ def _apply_exec_bridges(content: str) -> Tuple[str, int]:
     return next_content, count
 
 
-def apply_patch_to_content(content: str) -> Tuple[str, PatchStats]:
+def _apply_renderer_unlocks(next_content: str, stats: PatchStats) -> str:
+    """渲染层解锁（与身份/路由无关，local / server 两种模式都要）。"""
+    # 解锁模型列表（移植自 cursor-fd unlock-membership）：
+    # 免费账号的「模型选择器」判定函数体形如  ...})\{return X===M.FREE&&Y&&Z===void 0}
+    # 在函数体开头插入 return!1; 让它恒为 false（不再因 FREE 锁命名模型）。原表达式作为死代码保留，可回退。
+    # M 用 \w+ 泛化（不同版本变量名不同），比 cursor-fd 写死 lr 更耐版本。
+    model_lock_pattern = re.compile(
+        r"(hasResolvedTeamMembership:\w+,teamId:\w+\}\)\{)(return \w+===\w+\.FREE&&\w+&&\w+===void 0\})"
+    )
+
+    def inject_model_unlock(match: "re.Match[str]") -> str:
+        stats.model_unlock += 1
+        return match.group(1) + "return!1;" + SAND_MODEL_UNLOCK_MARKER + match.group(2)
+
+    next_content = model_lock_pattern.sub(inject_model_unlock, next_content)
+
+    # 会员判定改 PRO（3.8.24 实测命中）：客户端 _membershipType 读的是 storageService 里
+    # cursorAuth/stripeMembershipType（值就是 "free"/"pro" 等枚举字符串）。改成 =>"pro"||原读取，
+    # 短路恒返回 "pro"，让所有 ===qs.FREE 判定失效、===qs.PRO 成立。原读取保留为死代码，可回退。
+    mem_pro_pattern = re.compile(r"(_membershipType=\(\)=>)(this\.storageService\.get\()")
+
+    def inject_mem_pro(match: "re.Match[str]") -> str:
+        stats.model_unlock += 1
+        return match.group(1) + '"enterprise"||' + SAND_MEM_PRO_MARKER + match.group(2)
+
+    next_content = mem_pro_pattern.sub(inject_mem_pro, next_content)
+    # 刷新旧补丁里的 "pro" -> "enterprise"（旧版打的是 pro，再打补丁时升级）。
+    next_content = re.sub(
+        r'"pro"\|\|(' + re.escape(SAND_MEM_PRO_MARKER) + r")",
+        r'"enterprise"||\1',
+        next_content,
+    )
+
+    # 解锁 Max mode（3.8.24 实测命中）：hasValidPaymentMethod=async()=>{...联网查绑卡...}
+    # 免费无卡返回 false → 触发「Max mode is only available to paid users」。
+    # 在函数体开头插 return!0; 恒返回 true（Promise<true>），绕过绑卡守卫。负向前瞻保证幂等，可回退。
+    maxmode_pattern = re.compile(r"(hasValidPaymentMethod=async\(\)=>\{)(?!return!0;)")
+
+    def inject_maxmode(match: "re.Match[str]") -> str:
+        stats.model_unlock += 1
+        return match.group(1) + "return!0;" + SAND_MAXMODE_MARKER
+
+    return maxmode_pattern.sub(inject_maxmode, next_content)
+
+
+def _apply_server_identity_patches(next_content: str, stats: PatchStats) -> str:
+    """server 模式身份层：与 SandClaimer HDRFIX_V2 相同顺序。
+
+    AgentService / agent.v1 出 ide（服务端 agent = 一 turn 一条账单），其余出 sand（Bot 额度）。
+    不强制 managed-local；Ask / 子代理 / 窗口 / 摘要 / 四模式 / 续跑走 Cursor 服务端原生实现。
+    """
+    legacy_client_re = re.compile(
+        rf"([\"'])sand\1{LEGACY_CLIENT_MARKER_PATTERN}"
+    )
+    next_content, stats.migrated_client = legacy_client_re.subn(
+        lambda match: match.group(1)
+        + PATCH_CLIENT_TYPE
+        + match.group(1)
+        + SAND_CLIENT_MARKER,
+        next_content,
+    )
+    legacy_eligibility = "return!1;" + LEGACY_SAND_ELIGIBILITY_MARKER
+    stats.migrated_eligibility = next_content.count(legacy_eligibility)
+    next_content = next_content.replace(
+        legacy_eligibility,
+        "return!1;" + SAND_ELIGIBILITY_MARKER,
+    )
+
+    def _smart_header(match: "re.Match[str]") -> str:
+        stats.set_header += 1
+        obj = match.group(1)
+        q = match.group(2)
+        original = match.group(3)
+        return (
+            f"{obj}.header.set({q}x-cursor-client-type{q},"
+            f"{SAND_HDRFIX_V2_FN}({obj}){SAND_HDRFIX_V2_MARKER}"
+            f"{SAND_HDRFIX_V2_RB_PREFIX}{original}{SAND_HDRFIX_V2_RB_SUFFIX})"
+        )
+
+    next_content = HEADER_SET_SIMPLE_RE.sub(_smart_header, next_content)
+
+    def _cli_hdrfix_v2(match: re.Match[str]) -> str:
+        stats.set_header += 1
+        recv = match.group(1)
+        original = match.group(2)
+        return (
+            f'{recv}.header.set("x-cursor-client-type",'
+            f"{SAND_HDRFIX_V2_FN}({recv}){SAND_HDRFIX_V2_MARKER}"
+            f"{SAND_HDRFIX_V2_RB_PREFIX}{original}{SAND_HDRFIX_V2_RB_SUFFIX})"
+        )
+
+    next_content, _cli_n = AGENT_HOST_CLI_TYPE_RE.subn(
+        _cli_hdrfix_v2, next_content, count=1
+    )
+
+    for key, rule in CLIENT_RULES:
+
+        def replace_client(match: re.Match[str], stat_key: str = key) -> str:
+            current = match.group(3)
+            setattr(stats, stat_key, getattr(stats, stat_key) + 1)
+            if current == PATCH_CLIENT_TYPE:
+                stats.adopted_sand += 1
+                marker = SAND_CLIENT_EXISTING_MARKER
+            else:
+                marker = SAND_CLIENT_MARKER
+            return (
+                match.group(1)
+                + match.group(2)
+                + PATCH_CLIENT_TYPE
+                + match.group(2)
+                + marker
+            )
+
+        next_content = rule.sub(replace_client, next_content)
+
+    glass_true_pattern = re.compile(
+        r'(isGlass\?)(["\'])glass\2(:)(["\'])(?:ide|sand|agent)\4'
+    )
+
+    def _fix_glass_true(match: "re.Match[str]") -> str:
+        stats.is_glass += 1
+        q1 = match.group(2)
+        q2 = match.group(4)
+        return (
+            f"{match.group(1)}{q1}{PATCH_CLIENT_TYPE}{q1}{SAND_GLASSFIX_MARKER}"
+            f"{match.group(3)}{q2}{PATCH_CLIENT_TYPE}{q2}{SAND_CLIENT_MARKER}"
+        )
+
+    next_content = glass_true_pattern.sub(_fix_glass_true, next_content)
+
+    eligibility_pattern = re.compile(
+        r"(function\s+[A-Za-z0-9_$]+\([A-Za-z0-9_$]+\)\{)(const\{adminSettingsService:)"
+    )
+
+    def inject_eligibility(match: "re.Match[str]") -> str:
+        stats.eligibility += 1
+        return match.group(1) + "return!1;" + SAND_ELIGIBILITY_MARKER + match.group(2)
+
+    next_content = eligibility_pattern.sub(inject_eligibility, next_content)
+
+    if SAND_AGENT_IDE_MARKER not in next_content:
+
+        def _inject_agent_ide(match: re.Match[str]) -> str:
+            stats.set_header += 1
+            ident = match.group(1)
+            return (
+                f'{ident}.set("x-cursor-client-type","ide"{SAND_AGENT_IDE_MARKER});'
+                f"return{{headers:{ident},credentialFingerprint:"
+            )
+
+        next_content = AGENT_IDE_INJECT_RE.sub(_inject_agent_ide, next_content)
+
+    identity_count = next_content.count(AGENT_HOST_IDENTITY_ORIGINAL)
+    if identity_count:
+        next_content = next_content.replace(
+            AGENT_HOST_IDENTITY_ORIGINAL,
+            AGENT_HOST_IDENTITY_PATCHED,
+        )
+        stats.agent_host_identity += identity_count
+
+    return next_content
+
+
+def apply_server_mode_to_content(content: str) -> Tuple[str, PatchStats]:
+    """server 模式：sand 身份 + AgentService→ide 分流 + 渲染层解锁，不强制 managed-local。
+
+    聊天走服务端 agent（AgentService/Run）：一 turn 一条汇总账单；Bot 额度走 sand 通道，
+    AgentService 走 ide 以免 Sand traffic rejected。会员 fetch 伪装在 install 时注入 workbench。
+    """
+    stats = PatchStats()
+    next_content, _removed = remove_patch_from_content(content)
+    next_content = _apply_server_identity_patches(next_content, stats)
+    next_content = _apply_renderer_unlocks(next_content, stats)
+    return next_content, stats
+
+
+def apply_patch_to_content(
+    content: str, mode: str = PATCH_MODE_LOCAL
+) -> Tuple[str, PatchStats]:
+    if mode == PATCH_MODE_SERVER:
+        return apply_server_mode_to_content(content)
     stats = PatchStats()
     next_content = content
     legacy_client_re = re.compile(
@@ -2143,47 +2685,7 @@ def apply_patch_to_content(content: str) -> Tuple[str, PatchStats]:
 
     next_content = eligibility_pattern.sub(inject_eligibility, next_content)
 
-    # 解锁模型列表（移植自 cursor-fd unlock-membership）：
-    # 免费账号的「模型选择器」判定函数体形如  ...})\{return X===M.FREE&&Y&&Z===void 0}
-    # 在函数体开头插入 return!1; 让它恒为 false（不再因 FREE 锁命名模型）。原表达式作为死代码保留，可回退。
-    # M 用 \w+ 泛化（不同版本变量名不同），比 cursor-fd 写死 lr 更耐版本。
-    model_lock_pattern = re.compile(
-        r"(hasResolvedTeamMembership:\w+,teamId:\w+\}\)\{)(return \w+===\w+\.FREE&&\w+&&\w+===void 0\})"
-    )
-
-    def inject_model_unlock(match: "re.Match[str]") -> str:
-        stats.model_unlock += 1
-        return match.group(1) + "return!1;" + SAND_MODEL_UNLOCK_MARKER + match.group(2)
-
-    next_content = model_lock_pattern.sub(inject_model_unlock, next_content)
-
-    # 会员判定改 PRO（3.8.24 实测命中）：客户端 _membershipType 读的是 storageService 里
-    # cursorAuth/stripeMembershipType（值就是 "free"/"pro" 等枚举字符串）。改成 =>"pro"||原读取，
-    # 短路恒返回 "pro"，让所有 ===qs.FREE 判定失效、===qs.PRO 成立。原读取保留为死代码，可回退。
-    mem_pro_pattern = re.compile(r"(_membershipType=\(\)=>)(this\.storageService\.get\()")
-
-    def inject_mem_pro(match: "re.Match[str]") -> str:
-        stats.model_unlock += 1
-        return match.group(1) + '"enterprise"||' + SAND_MEM_PRO_MARKER + match.group(2)
-
-    next_content = mem_pro_pattern.sub(inject_mem_pro, next_content)
-    # 刷新旧补丁里的 "pro" -> "enterprise"（旧版打的是 pro，再打补丁时升级）。
-    next_content = re.sub(
-        r'"pro"\|\|(' + re.escape(SAND_MEM_PRO_MARKER) + r")",
-        r'"enterprise"||\1',
-        next_content,
-    )
-
-    # 解锁 Max mode（3.8.24 实测命中）：hasValidPaymentMethod=async()=>{...联网查绑卡...}
-    # 免费无卡返回 false → 触发「Max mode is only available to paid users」。
-    # 在函数体开头插 return!0; 恒返回 true（Promise<true>），绕过绑卡守卫。负向前瞻保证幂等，可回退。
-    maxmode_pattern = re.compile(r"(hasValidPaymentMethod=async\(\)=>\{)(?!return!0;)")
-
-    def inject_maxmode(match: "re.Match[str]") -> str:
-        stats.model_unlock += 1
-        return match.group(1) + "return!0;" + SAND_MAXMODE_MARKER
-
-    next_content = maxmode_pattern.sub(inject_maxmode, next_content)
+    next_content = _apply_renderer_unlocks(next_content, stats)
 
     route_count = next_content.count(MANAGED_LOCAL_ROUTE_ORIGINAL)
     if SAND_MANAGED_LOCAL_ROUTE_MARKER not in next_content:
@@ -2208,6 +2710,19 @@ def apply_patch_to_content(content: str) -> Tuple[str, PatchStats]:
                 MANAGED_LOCAL_ROUTE_PATCHED,
             )
             stats.managed_local_route += route_count
+    if SAND_MANAGED_LOCAL_ROUTE_MARKER not in next_content:
+        def _comment_connect_gate(match: re.Match[str]) -> str:
+            stats.managed_local_route += 1
+            return (
+                SAND_MANAGED_LOCAL_ROUTE_MARKER
+                + SAND_MANAGED_LOCAL_RB_PREFIX
+                + match.group(0)
+                + SAND_MANAGED_LOCAL_RB_SUFFIX
+            )
+
+        next_content, n319 = MANAGED_LOCAL_319_RE.subn(
+            _comment_connect_gate, next_content
+        )
 
     if SAND_MODEL_ROUTE_MARKER not in next_content:
         def _force_model_route(match: re.Match[str]) -> str:
@@ -2230,7 +2745,21 @@ def apply_patch_to_content(content: str) -> Tuple[str, PatchStats]:
     next_content, _legacy_mode_n = MODE_ROUTE_LEGACY_RB_RE.subn(
         lambda match: match.group(1) + '?"mode-not-supported":', next_content
     )
-    if SAND_MODE_ROUTE_MARKER not in next_content:
+    if MODE_HOSTED_IIFE_RE.search(next_content) and SAND_MODE_ROUTE_MARKER not in next_content:
+        def _allow_hosted_or_any_mode(match: re.Match[str]) -> str:
+            stats.sand_rpc += 1
+            return (
+                "!0"
+                + SAND_MODE_ROUTE_MARKER
+                + SAND_MODE_ROUTE_RB_PREFIX
+                + match.group(0)
+                + SAND_MODE_ROUTE_RB_SUFFIX
+            )
+
+        next_content, _iife_n = MODE_HOSTED_IIFE_RE.subn(
+            _allow_hosted_or_any_mode, next_content, count=1
+        )
+    if MODE_NOT_SUPPORTED_RE.search(next_content):
         def _allow_any_mode(match: re.Match[str]) -> str:
             stats.sand_rpc += 1
             original = match.group(0)
@@ -2245,7 +2774,7 @@ def apply_patch_to_content(content: str) -> Tuple[str, PatchStats]:
             )
 
         next_content, _mode_n = MODE_NOT_SUPPORTED_RE.subn(
-            _allow_any_mode, next_content, count=1
+            _allow_any_mode, next_content
         )
 
     if SAND_ACTION_ROUTE_MARKER not in next_content and ACTION_GATE_ORIGINAL in next_content:
@@ -2281,6 +2810,10 @@ def apply_patch_to_content(content: str) -> Tuple[str, PatchStats]:
         next_content, _sub_n = SUBAGENT_RUN_OPTIONS_RE.subn(
             _allow_subagent_run_options, next_content, count=1
         )
+        if not _sub_n:
+            next_content, _meta_n = DIRECT_META_GATE_RE.subn(
+                _allow_subagent_run_options, next_content, count=1
+            )
 
     if SAND_LOCAL_MODEL_MARKER not in next_content:
         def _force_local_model(match: re.Match[str]) -> str:
@@ -2398,6 +2931,8 @@ def apply_patch_to_content(content: str) -> Tuple[str, PatchStats]:
     stats.local_agent += agent_cfg_n
     next_content, simple_n = apply_simple_replacements(next_content)
     stats.sand_rpc += simple_n
+    next_content, recon_n = _apply_runinference_reconnect_to_stream(next_content)
+    stats.sand_rpc += recon_n
     return next_content, stats
 
 
@@ -2474,6 +3009,14 @@ def remove_patch_from_content(content: str) -> Tuple[str, RemoveStats]:
         next_content,
     )
     stats.client_type += hdrfix_count
+    next_content, hdrfix_v2_rb_count = HDRFIX_V2_RB_RE.subn(
+        lambda match: match.group(1), next_content
+    )
+    stats.client_type += hdrfix_v2_rb_count
+    next_content, hdrfix_v2_count = HDRFIX_V2_REMOVE_RE.subn('"ide"', next_content)
+    stats.client_type += hdrfix_v2_count
+    next_content, agent_ide_count = AGENT_IDE_REMOVE_RE.subn("", next_content)
+    stats.client_type += agent_ide_count
     eligibility_re = re.compile(rf"return!1;{ELIGIBILITY_MARKER_PATTERN}")
     next_content, eligibility_count = eligibility_re.subn("", next_content)
     stats.eligibility += eligibility_count
@@ -2491,6 +3034,14 @@ def remove_patch_from_content(content: str) -> Tuple[str, RemoveStats]:
         lambda match: match.group(1), next_content
     )
     stats.managed_local_route += route_rb_n
+    next_content, route319_n = MANAGED_LOCAL_319_RB_RE.subn(
+        lambda match: match.group(1), next_content
+    )
+    stats.managed_local_route += route319_n
+    residual_route = next_content.count(SAND_MANAGED_LOCAL_ROUTE_MARKER)
+    if residual_route:
+        next_content = next_content.replace(SAND_MANAGED_LOCAL_ROUTE_MARKER, "")
+        stats.managed_local_route += residual_route
     route_count = next_content.count(MANAGED_LOCAL_ROUTE_PATCHED)
     if route_count:
         next_content = next_content.replace(
@@ -2521,6 +3072,10 @@ def remove_patch_from_content(content: str) -> Tuple[str, RemoveStats]:
         lambda match: match.group(1) + '?"mode-not-supported":', next_content
     )
     stats.sand_rpc += mode_rb_n
+    next_content, mode319_n = MODE_ROUTE_319_RB_RE.subn(
+        lambda match: match.group(1), next_content
+    )
+    stats.sand_rpc += mode319_n
     next_content, legacy_mode_rb_n = MODE_ROUTE_LEGACY_RB_RE.subn(
         lambda match: match.group(1) + '?"mode-not-supported":', next_content
     )
@@ -2643,6 +3198,8 @@ def remove_patch_from_content(content: str) -> Tuple[str, RemoveStats]:
     stats.ctx_window += ctx_n
     next_content, agent_cfg_n = remove_local_agent_config(next_content)
     stats.local_agent += agent_cfg_n
+    next_content, recon_n = _remove_runinference_reconnect_to_stream(next_content)
+    stats.sand_rpc += recon_n
     next_content, simple_n = remove_simple_replacements(next_content)
     stats.sand_rpc += simple_n
 
@@ -2854,6 +3411,12 @@ _ALL_SAND_MARKERS: Tuple[str, ...] = (
     SAND_CLIENT_MARKER,
     SAND_CLIENT_EXISTING_MARKER,
     SAND_HDRFIX_MARKER,
+    SAND_HDRFIX_V2_MARKER,
+    SAND_AGENT_IDE_MARKER,
+    SAND_MEMBERSHIP_MARKER,
+    SAND_MODEL_UNLOCK_MARKER,
+    SAND_MEM_PRO_MARKER,
+    SAND_MAXMODE_MARKER,
     SAND_GLASSFIX_MARKER,
     SAND_VERFIX_MARKER,
     SAND_NSFIX_MARKER,
@@ -2883,6 +3446,7 @@ _ALL_SAND_MARKERS: Tuple[str, ...] = (
     SAND_MODEL_INFO_END_MARKER,
     SAND_SUBAGENT_RETRY_MARKER,
     SAND_MAX_RETRIES_MARKER,
+    SAND_RECONNECT_STREAM_MARKER,
     SAND_INTERACTION_ID_MARKER,
     SAND_HTTP2_GATE_MARKER,
 )
@@ -2941,6 +3505,9 @@ def inspect_status(layout: CursorLayout) -> PatchStatus:
     sand_rpc_markers = 0
     ctx_window_markers = 0
     local_agent_markers = 0
+    membership_markers = 0
+    hdrfix_v2_markers = 0
+    renderer_unlock_markers = 0
     external_sand_matches = 0
     external_marker_count = 0
     patched_files: List[Path] = []
@@ -2985,6 +3552,13 @@ def inspect_status(layout: CursorLayout) -> PatchStatus:
         )
         ctx_window_count = get(SAND_CTX_WINDOW_MARKER, 0)
         local_agent_count = get(SAND_BG_SUMMARY_MARKER, 0) + get(SAND_MODEL_INFO_MARKER, 0)
+        membership_count = get(SAND_MEMBERSHIP_MARKER, 0)
+        hdrfix_v2_count = get(SAND_HDRFIX_V2_MARKER, 0) + get(SAND_AGENT_IDE_MARKER, 0)
+        renderer_unlock_count = (
+            get(SAND_MODEL_UNLOCK_MARKER, 0)
+            + get(SAND_MEM_PRO_MARKER, 0)
+            + get(SAND_MAXMODE_MARKER, 0)
+        )
         # 旧版 marker 极少出现；先用 in 快速判否，避免对 130MB 跑回溯正则。
         if LEGACY_SAND_CLIENT_MARKER in content:
             legacy_client_count = len(
@@ -3029,6 +3603,9 @@ def inspect_status(layout: CursorLayout) -> PatchStatus:
             + sand_rpc_count
             + ctx_window_count
             + local_agent_count
+            + membership_count
+            + hdrfix_v2_count
+            + renderer_unlock_count
         ):
             patched_files.append(target)
         client_markers += client_count
@@ -3049,6 +3626,9 @@ def inspect_status(layout: CursorLayout) -> PatchStatus:
         sand_rpc_markers += sand_rpc_count
         ctx_window_markers += ctx_window_count
         local_agent_markers += local_agent_count
+        membership_markers += membership_count
+        hdrfix_v2_markers += hdrfix_v2_count
+        renderer_unlock_markers += renderer_unlock_count
         for _key, rule in CLIENT_RULES:
             for match in rule.finditer(content):
                 if match.group(3) == "sand":
@@ -3079,6 +3659,10 @@ def inspect_status(layout: CursorLayout) -> PatchStatus:
         sand_rpc_markers=sand_rpc_markers,
         ctx_window_markers=ctx_window_markers,
         local_agent_markers=local_agent_markers,
+        membership_markers=membership_markers,
+        hdrfix_v2_markers=hdrfix_v2_markers,
+        renderer_unlock_markers=renderer_unlock_markers,
+        cursor_version=layout.version,
         dns_hosts_installed=bool(dns_diag.get("hosts_installed")),
         dns_hijacked=bool(dns_diag.get("hijacked")),
     )
@@ -3355,16 +3939,22 @@ def _build_install_plan(
     for target in layout.target_paths:
         original = _read_planned_file(target)
         content = _decode_js(original.original, target)
-        next_content, stats = apply_patch_to_content(content)
+        next_content, stats = apply_patch_to_content(content, mode=get_patch_mode())
         if target.name in DNS_NODE_TARGETS:
             next_content, dns_n = apply_dns_node_patch(next_content)
             stats.dns_node += dns_n
-        # 旧版会在 workbench 注入 fetch 包装，会破坏 ChatService 双向流（Connection Error）。
-        # 安装时只剥离旧片段，不再注入。
+        # local 模式：fetch 包装会破坏 ChatService 双向流，只剥离不注入。
+        # server 模式：走 connect / AgentService，注入会员伪装绕过 unpaid invoice + 解锁模型列表。
         if target.name in MEMBERSHIP_TARGET_NAMES:
             stripped, n = MEMBERSHIP_SNIPPET_RE.subn("", next_content)
             if n:
                 next_content = stripped
+            if (
+                get_patch_mode() == PATCH_MODE_SERVER
+                and SAND_MEMBERSHIP_MARKER not in next_content
+            ):
+                next_content = SAND_MEMBERSHIP_SNIPPET + next_content
+                stats.model_unlock += 1
         if next_content != content:
             plan[target] = PlannedFile(
                 original=original.original,
@@ -3521,9 +4111,47 @@ def install(layout: CursorLayout) -> int:
 
     close_cursor(layout)
     changed_extensions = _planned_extension_names(layout, plan)
+    mode = get_patch_mode()
+
+    def validate_server_mode(status: PatchStatus) -> None:
+        # server 模式：sand 身份 + AgentService→ide 分流 + 会员伪装；不得残留 local 回路注入。
+        local_left = {
+            "route": status.managed_local_route_markers,
+            "runtime": status.local_runtime_load_markers,
+            "direct": status.direct_stream_markers,
+            "move_exec": status.move_exec_markers,
+            "modelRoute": status.model_route_markers,
+            "localModel": status.local_model_markers,
+            "sandRpc": status.sand_rpc_markers,
+            "ctxWindow": status.ctx_window_markers,
+            "localAgent": status.local_agent_markers,
+        }
+        bad_local = {k: v for k, v in local_left.items() if v}
+        if bad_local:
+            raise SandToolError(
+                f"server 模式安装后仍残留 local 回路注入，已回滚：{bad_local}"
+            )
+        missing = []
+        if status.membership_markers < 1:
+            missing.append("membership")
+        if status.hdrfix_v2_markers < 1:
+            missing.append("hdrfix_v2/agent_ide")
+        if status.renderer_unlock_markers < 3:
+            missing.append("renderer_unlock")
+        if missing:
+            raise SandToolError(
+                f"server 模式安装不完整（缺少 {', '.join(missing)}），已回滚"
+            )
+        if status.external_marker_count:
+            raise SandToolError("server 模式检测到无法识别的 Sand 标记，已回滚")
 
     def validate() -> None:
         status = inspect_status(layout)
+        if mode == PATCH_MODE_SERVER:
+            validate_server_mode(status)
+            _verify_extension_hashes(layout, changed_extensions)
+            _verify_product_checksums(layout)
+            return
         if (
             not status.installed
             or status.ide_matches != 0
@@ -3641,6 +4269,11 @@ def build_parser() -> argparse.ArgumentParser:
         "path",
         help="Cursor.exe、Cursor.app、resources/app、安装根目录，或 auto",
     )
+    set_mode = commands.add_parser(
+        "set-mode",
+        help="切换运行模式后需重新 install：local=sand 本地循环（默认）；server=原生 ide 身份走服务端 agent（一 turn 一条账单）",
+    )
+    set_mode.add_argument("mode", choices=list(PATCH_MODES))
     return parser
 
 
@@ -3652,15 +4285,59 @@ def collect_status_lines() -> List[Tuple[str, str]]:
         return [(str(exc), ANSI_YELLOW)]
 
     lines: List[Tuple[str, str]] = [
-        (f"Cursor {layout.version}：{layout.install_root}", ANSI_BLUE)
+        (f"Cursor {layout.version}：{layout.install_root}", ANSI_BLUE),
+        (
+            f"已适配 Cursor：{supported_cursor_versions_label()}（按本机版本自动选锚点，旧版不卸）",
+            ANSI_BLUE,
+        ),
     ]
-    if status.installed:
+    mode = get_patch_mode()
+    lines.append(
+        (
+            "运行模式：server（原生 ide 身份走服务端 agent，一 turn 一条账单）"
+            if mode == PATCH_MODE_SERVER
+            else "运行模式：local（sand 身份 + 本地 agent 循环，每 step 一条账单）",
+            ANSI_BLUE,
+        )
+    )
+    if mode == PATCH_MODE_SERVER:
+        if status.client_markers or status.managed_local_route_markers:
+            lines.append(
+                ("盘上仍是 local 模式的 sand 注入，请重新运行 install 切到 server", ANSI_YELLOW)
+            )
+        elif status.installed:
+            lines.append(
+                (
+                    "已安装 server 模式（sand + AgentService→ide + 会员伪装，聊天走服务端 agent）",
+                    ANSI_GREEN,
+                )
+            )
+        else:
+            lines.append(("server 模式尚未安装", ANSI_YELLOW))
+    elif status.installed:
         lines.append(("已安装 Sand 客户端模式", ANSI_GREEN))
         if status.stream_mode_installed:
             if status.direct_stream_markers:
+                if layout.version.startswith("3.19"):
+                    stream_msg = (
+                        "Stream 改道已启用（3.19.x 4883.js ve → InferenceService.Stream）"
+                    )
+                else:
+                    stream_msg = (
+                        "Stream 改道已启用（3.18.x InferenceService gre/hre → Stream）"
+                    )
+                lines.append((stream_msg, ANSI_GREEN))
+            elif layout.version.startswith("3.19"):
                 lines.append(
                     (
-                        "Stream 改道已启用（3.18.x InferenceService gre/hre → Stream/RunInference）",
+                        "Stream 改道不完整：3.19.x 仍走 RunInference，sand 会被服务端拒绝",
+                        ANSI_YELLOW,
+                    )
+                )
+            elif layout.version.startswith("3.18"):
+                lines.append(
+                    (
+                        "Stream 改道已启用（3.18.x agent_host_local_loop → InferenceService.RunInference）",
                         ANSI_GREEN,
                     )
                 )
@@ -3670,7 +4347,8 @@ def collect_status_lines() -> List[Tuple[str, str]]:
                 )
         else:
             hint = (
-                "3.18.x 还需 gre/hre + managed-local；"
+                "3.19.x 必须 4883.js ve→Stream（direct>0），否则 sand 打 RunInference 被拒；"
+                "3.18.x 还需 gre/hre 或 local_loop + managed-local；"
                 "3.17.21 还需 local_loop + move_exec + 478 闸门 + 双白名单绕过"
             )
             lines.append(
@@ -3722,7 +4400,7 @@ def collect_status_lines() -> List[Tuple[str, str]]:
     if status.installed and status.sand_rpc_markers >= 1:
         lines.append(
             (
-                f"sand-rpc-lite：Task 注册 + 478 子代理路由已注入（{status.sand_rpc_markers} 处 marker）",
+                f"sand-rpc-lite：Task 注册 + 子代理路由已注入（{status.sand_rpc_markers} 处 marker）",
                 ANSI_GREEN,
             )
         )
@@ -3739,7 +4417,7 @@ def collect_status_lines() -> List[Tuple[str, str]]:
         lines.append(("本地 agent 配置：后台摘要阈值（90%/95%）已注入", ANSI_GREEN))
     if status.installed and status.feature_flag_markers:
         ff_hint = (
-            "（Task 子代理：taskToolProps + Roe 客户端开关已注入）"
+            "（Task 子代理：taskToolProps + 运行期 featureFlags 已注入）"
             if status.sand_rpc_markers >= 1
             else "（原生子代理 / Task 工具受 taskToolProps 限制，暂无法启用）"
         )
@@ -3764,6 +4442,7 @@ def status_report_rows(
     return [
         ("tool_version", TOOL_VERSION),
         ("cursor_version", layout.version),
+        ("supported_cursor", supported_cursor_versions_label()),
         ("path", layout.install_root),
         ("patched", status.installed),
         ("stream_mode", status.stream_mode_installed),
@@ -3773,6 +4452,9 @@ def status_report_rows(
         ("feature_flags", status.feature_flag_markers),
         ("client_markers", status.client_markers + status.legacy_client_markers),
         ("direct_stream", status.direct_stream_markers),
+        ("membership", status.membership_markers),
+        ("hdrfix_v2", status.hdrfix_v2_markers),
+        ("renderer_unlock", status.renderer_unlock_markers),
         ("dns_node", status.dns_node_markers),
         ("dns_hosts", status.dns_hosts_installed),
         ("dns_hijacked", dns.get("hijacked")),
@@ -3782,8 +4464,34 @@ def status_report_rows(
     ]
 
 
-def status_verdict(status: PatchStatus) -> str:
-    """未安装 / 已安装且 Stream 完整 / 已安装但不完整。未安装不再显示成 OK。"""
+def status_verdict(status: PatchStatus, mode: Optional[str] = None) -> str:
+    """未安装 / 已安装且完整 / 已安装但不完整。未安装不再显示成 OK。
+
+    server 模式的「完整」= AgentService→ide 分流 + 会员伪装 + 渲染层解锁，且无 local 回路残留；
+    local 模式的「完整」= Stream 改道全部到位且 ide 头全部改成 sand。
+    """
+    mode = mode or get_patch_mode()
+    if mode == PATCH_MODE_SERVER:
+        local_left = (
+            status.managed_local_route_markers
+            + status.local_runtime_load_markers
+            + status.direct_stream_markers
+            + status.sand_rpc_markers
+            + status.ctx_window_markers
+            + status.local_agent_markers
+        )
+        if local_left:
+            return "LOCAL_LEFTOVER"
+        if not status.installed:
+            return "NOT_INSTALLED"
+        if (
+            status.membership_markers >= 1
+            and status.hdrfix_v2_markers >= 1
+            and status.renderer_unlock_markers >= 3
+            and status.external_marker_count == 0
+        ):
+            return "OK"
+        return "INCOMPLETE"
     if not status.installed:
         return "NOT_INSTALLED"
     if (
@@ -3872,6 +4580,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if args.command == "set-path":
             print_banner()
             return apply_set_path(args.path)
+        if args.command == "set-mode":
+            mode = set_patch_mode(args.mode)
+            print(colorize(f"运行模式已设为 {mode}，重新运行 install 生效", ANSI_GREEN))
+            print_banner()
+            return 0
 
         layout = resolve_cursor_layout()
         if args.command == "install":

@@ -1,6 +1,9 @@
 # 构建产物 / 打包输出
-nuitka-out/
-installer/
+# Nuitka 中间目录仍忽略；发布用 exe 允许入库（走 Git LFS）
+nuitka-out/*
+!nuitka-out/*.exe
+installer/*
+!installer/*.exe
 build/
 dist/
 *.spec

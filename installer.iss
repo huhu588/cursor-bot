@@ -1,13 +1,14 @@
-﻿; Sand ???????????Inno Setup 6?
+﻿; Infinity — Inno Setup 6
 [Setup]
-AppName=Sand ?????
-AppVersion=2.2.8
-AppPublisher=SandClaimer
-DefaultDirName={autopf}\SandClaimer
-DefaultGroupName=Sand ?????
+AppId={{8E4C2A91-6B17-4F3D-9C58-7A1B2C3D4E5F}
+AppName=Infinity
+AppVersion=2.3.5
+AppPublisher=Infinity
+DefaultDirName={autopf}\Infinity
+DefaultGroupName=Infinity
 DisableProgramGroupPage=yes
 OutputDir=installer
-OutputBaseFilename=SandClaimer-Setup-2.2.8
+OutputBaseFilename=Infinity-Setup-2.3.5
 SetupIconFile=icon.ico
 UninstallDisplayIcon={app}\SandClaimer.exe
 Compression=lzma2/max
@@ -25,9 +26,9 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "nuitka-out\SandClaimer.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\Sand ?????"; Filename: "{app}\SandClaimer.exe"
-Name: "{group}\{cm:UninstallProgram,Sand ?????}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\Sand ?????"; Filename: "{app}\SandClaimer.exe"; Tasks: desktopicon
+Name: "{group}\Infinity"; Filename: "{app}\SandClaimer.exe"
+Name: "{group}\{cm:UninstallProgram,Infinity}"; Filename: "{uninstallexe}"
+Name: "{autodesktop}\Infinity"; Filename: "{app}\SandClaimer.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\SandClaimer.exe"; Description: "{cm:LaunchProgram,Sand ?????}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\SandClaimer.exe"; Description: "{cm:LaunchProgram,Infinity}"; Flags: nowait postinstall skipifsilent

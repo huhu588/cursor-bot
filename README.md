@@ -38,9 +38,11 @@ build.bat
 产物：
 
 - `nuitka-out\SandClaimer.exe` —— 单文件绿色版，双击即用。
-- `installer\SandClaimer-Setup-2.2.8.exe` —— 中文安装向导，装到 Program Files 并建开始菜单 / 桌面快捷方式。
+- `installer\Infinity-Setup-2.3.3.exe` —— 中文安装向导，装到 Program Files 并建开始菜单 / 桌面快捷方式。
 
-只想编译不打安装包时用 `build_win.bat`：默认出 onefile，`fast` 出 standalone 目录（跳过 onefile 打包，快），`deps` 先装依赖再编译。macOS 的 `.app` / `.dmg` 走 `codemagic.yaml` 流水线。
+本机补丁已适配 **Cursor 3.17.21 / 3.18.9 / 3.18.25 / 3.19.7**（按安装目录自动选锚点，旧版适配保留）。
+
+只想编译不打安装包时用 `build_win.bat`：默认出 onefile，`fast` 出 standalone 目录（跳过 onefile 打包，快），`deps` 先装依赖再编译。云端打包走 GitHub Actions（`.github/workflows/build.yml`）：推 `v*` tag 或在 Actions 页手动触发，同时产出 Windows 安装包和 macOS 的 Apple Silicon / Intel 两个 dmg，在该次运行的 Artifacts 里下载。macOS 的 `.app` 无法在 Windows 上交叉编译，也可改用 Codemagic（`codemagic.yaml`）。
 
 ### 为什么用 Nuitka（而非 PyInstaller）
 

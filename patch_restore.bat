@@ -8,7 +8,7 @@ exit /b
 
 :run
 echo ========================================
-echo  Cursor patch restore / uninstall  v2.2.9
+echo  Cursor patch restore / uninstall  v2.3.5
 echo ========================================
 echo.
 echo ASCII-only bat (cmd GBK). Reverts sand flags including broken 2.0.7 Statsig JS.

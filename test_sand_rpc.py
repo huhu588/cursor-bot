@@ -9,6 +9,7 @@ from pathlib import Path
 from sand_patch import (
     AGENT_HOST_MODULE_ANCHOR,
     SAND_AGENT_FLAGS_MARKER,
+    SAND_TASK_TOOL_PROPS_MARKER,
     TASK_TOOL_PROPS_REF,
     TASK_TOOL_PROPS_VOID,
     apply_agent_runtime_flags,
@@ -153,6 +154,97 @@ def test_agent_flags_skipped_when_object_unreferenced() -> None:
     assert out == src
 
 
+def test_319_feature_flags_be_fallback() -> None:
+    """3.19.7 const be={...enableEmptyResponseRetry 在中间...} 且用 ?l:be 引用。"""
+    src = (
+        "const be={disableBackgroundTaskFollowUp:!1,enableAwaitForSubagents:!0,"
+        "enableEmptyResponseRetry:!0,nalLoopDetection:!0,useClientSideSubagent:!0};"
+        "const g=null!==(l=t.featureFlags)&&void 0!==l?l:be;"
+    )
+    out, n = apply_agent_runtime_flags(src)
+    assert n >= 1
+    assert SAND_AGENT_FLAGS_MARKER in out
+    assert "enableMultitaskMode:!0" in out
+    assert "enableReadonlyShell:!0" in out
+    restored, _ = remove_agent_runtime_flags(out)
+    assert restored == src
+
+
+def test_319_task_throw_replaced() -> None:
+    src = (
+        "n.d(t,{createAgentHost:()=>ot});"
+        "function Ae(e){return{getTaskToolConfig:()=>Ne(this,void 0,void 0,function*(){"
+        'throw new Error("managed local loop does not build in-process child AgentConfig")}),'
+        "modelInfo:n}}"
+    )
+    out, n = apply_sand_rpc_lite(src)
+    assert n >= 1
+    assert SAND_TASK_TOOL_PROPS_MARKER in out
+    assert "getTaskToolConfig:async(e,t)=>{" in out
+    assert "managed local loop does not build" in out
+    restored, _ = remove_sand_rpc_lite(out)
+    assert restored == src
+    again, _ = apply_sand_rpc_lite(out)
+    assert again == out
+
+
+def test_317_createAgentHost_solo_export_still_matches() -> None:
+    """3.17.21 的 n.d(t,{createAgentHost:()=>Loe}); 不能被 3.19 的宽匹配挤掉。"""
+    src = _sample_js()
+    assert "n.d(t,{createAgentHost:()=>Loe});" in src
+    out, n = apply_sand_rpc_lite(src)
+    assert n >= 1
+    assert TASK_TOOL_PROPS_REF in out
+    restored, _ = remove_sand_rpc_lite(out)
+    assert restored == src
+
+
+def test_stream_mode_keeps_317_whitelist_and_allows_319() -> None:
+    from sand_patch import PatchStatus
+
+    def status(**extra: object) -> PatchStatus:
+        base = dict(
+            client_markers=1,
+            eligibility_markers=0,
+            ide_matches=0,
+            external_sand_matches=0,
+            external_marker_count=0,
+            legacy_client_markers=0,
+            legacy_eligibility_markers=0,
+            patched_files=(),
+            managed_local_route_markers=1,
+            local_runtime_load_markers=1,
+            move_exec_markers=1,
+            agent_host_enablement_markers=1,
+            agent_host_identity_markers=1,
+        )
+        base.update(extra)
+        return PatchStatus(**base)  # type: ignore[arg-type]
+
+    incomplete_317 = status(cursor_version="3.17.21")
+    assert incomplete_317.stream_mode_installed is False
+    complete_317 = status(
+        cursor_version="3.17.21",
+        model_route_markers=1,
+        local_model_markers=1,
+    )
+    assert complete_317.stream_mode_installed is True
+    complete_318 = status(cursor_version="3.18.25")
+    assert complete_318.stream_mode_installed is True
+    complete_319 = status(cursor_version="3.19.7")
+    assert complete_319.stream_mode_installed is False
+    complete_319_stream = status(cursor_version="3.19.7", direct_stream_markers=1)
+    assert complete_319_stream.stream_mode_installed is True
+
+
+def test_supported_cursor_versions_keep_old_and_add_319() -> None:
+    from sand_patch import STREAM_CURSOR_VERSION, STREAM_CURSOR_VERSIONS
+
+    assert STREAM_CURSOR_VERSIONS[:3] == ("3.17.21", "3.18.9", "3.18.25")
+    assert "3.19.7" in STREAM_CURSOR_VERSIONS
+    assert STREAM_CURSOR_VERSION == "3.19.7"
+
+
 def test_legacy_agent_flags_still_removed() -> None:
     src = (
         "const Roe={enableEmptyResponseRetry:!0"
@@ -180,6 +272,11 @@ def main() -> int:
         test_apply_agent_runtime_flags_on_roe,
         test_agent_flags_match_renamed_object,
         test_agent_flags_skipped_when_object_unreferenced,
+        test_319_feature_flags_be_fallback,
+        test_319_task_throw_replaced,
+        test_317_createAgentHost_solo_export_still_matches,
+        test_stream_mode_keeps_317_whitelist_and_allows_319,
+        test_supported_cursor_versions_keep_old_and_add_319,
         test_legacy_agent_flags_still_removed,
     ]
     failed = 0

@@ -8,16 +8,20 @@ exit /b
 
 :run
 echo ========================================
-echo  Cursor Grok Bot patch install  v2.2.9
+echo  Cursor Grok Bot patch install  v2.3.5
+echo  mode: LOCAL (sand identity, local agent loop, one bill per step)
 echo ========================================
 echo.
 echo ASCII-only bat (cmd GBK). Closes Cursor, patches JS, writes hosts, flushdns.
+echo Also switches back from server (big-bill) mode if it was active.
 echo Fully quit Cursor after [OK], then reopen.
 echo.
+python sand_patch.py set-mode local
+if errorlevel 1 goto fail
 python sand_patch.py install
 if errorlevel 1 goto fail
 echo.
-echo [OK] Patch installed. Fully quit Cursor, reopen, then chat.
+echo [OK] LOCAL mode installed. Fully quit Cursor, reopen, then chat.
 echo.
 pause
 exit /b 0
@@ -26,6 +30,7 @@ exit /b 0
 echo.
 echo [FAIL] Close Cursor, run as Administrator:
 echo   python sand_patch.py set-path "D:\GongJu\cursor"
+echo   python sand_patch.py set-mode local
 echo   python sand_patch.py install
 echo.
 pause

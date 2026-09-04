@@ -15,7 +15,7 @@
         <img class="brand-icon" src="infinity-icon.png" width="36" height="36" alt="" />
         <div class="brand-text">
           <strong>Infinity</strong>
-          <span>INFINITY免费公益</span>
+          <span>INFINITY免费公益 · v<span id="appVersionLabel">2.3.5</span></span>
         </div>
       </div>
       <nav class="nav" aria-label="分区">
@@ -77,6 +77,7 @@
             </div>
           </div>
           <p class="hint" id="patchInfo">正在检测本机 Cursor 安装…</p>
+          <p class="hint" id="patchCompat">适配 Cursor 3.17.21 / 3.18.9 / 3.18.25 / 3.19.7（按本机版本自动选锚点）</p>
           <ul class="patch-detail" id="patchDetail" hidden></ul>
           <p class="hint patch-admin" id="patchAdminHint" hidden></p>
           <div class="row-actions">
@@ -164,7 +165,7 @@
         <p><b>常用操作</b></p>
         <ol class="help-steps">
           <li><b>设置路径</b>：打开「本机 Cursor 补丁」，确认路径输入框。一般留空即可自动检测；若检测失败，填 Cursor.exe 或安装目录后点「设置路径」。</li>
-          <li><b>打补丁</b>：点「打补丁」，非管理员会弹出 UAC。完成后请完全退出并重新打开 Cursor，再开始对话。</li>
+          <li><b>打补丁</b>：点「打补丁」，非管理员会弹出 UAC。已适配 Cursor 3.17.21、3.18.x、3.19.7，会按本机版本自动选择锚点，旧版适配不会被卸掉。完成后请完全退出并重新打开 Cursor，再开始对话。</li>
           <li><b>修复 DNS</b>：若本机开着 Clash 等 fake-ip 代理，点「修复 DNS」写入 hosts；可用「查看补丁情况」确认 hosts 已修复。</li>
           <li><b>探测本地账号</b>：到「导入账号」点「探测本机账号」，把当前 Cursor 已登录的号加入列表（也可粘贴 token / 导入 JSON）。</li>
           <li><b>打开 Cursor IDE 使用</b>：在账号列表里点「切号」写入本机登录态，然后打开 Cursor 即可使用。需要换号时再切一次。</li>

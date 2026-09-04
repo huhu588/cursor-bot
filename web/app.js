@@ -1028,6 +1028,15 @@ async function refreshPatch() {
   }
   info.textContent = `Cursor ${res.version || "?"} · ${res.path || ""}${res.toolVersion ? ` · 补丁工具 v${res.toolVersion}` : ""}`;
   setStatus(info.textContent);
+  const compat = $("patchCompat");
+  if (compat) {
+    const versions = Array.isArray(res.supportedVersions) && res.supportedVersions.length
+      ? res.supportedVersions.join(" / ")
+      : "3.17.21 / 3.18.9 / 3.18.25 / 3.19.7";
+    compat.textContent = `适配 Cursor ${versions}（按本机版本自动选锚点，旧版不卸）`;
+  }
+  const verLabel = $("appVersionLabel");
+  if (verLabel && res.toolVersion) verLabel.textContent = res.toolVersion;
   const lines = [];
   const s = res.stream || {};
   if (installed) {

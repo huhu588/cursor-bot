@@ -1,0 +1,3 @@
+# 发布用二进制走 Git LFS，避免把大 exe 直接塞进 git 对象库
+nuitka-out/*.exe filter=lfs diff=lfs merge=lfs -text
+installer/*.exe filter=lfs diff=lfs merge=lfs -text
